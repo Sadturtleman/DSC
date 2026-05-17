@@ -1,0 +1,25 @@
+# Local Claude Code state (never commit)
+.claude/
+
+# Maven build output
+target/
+*.class
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / runtime
+*.log
+
+# Docker compose runtime data (volumes are named — but ignore stray local mounts)
+docker/**/data/
