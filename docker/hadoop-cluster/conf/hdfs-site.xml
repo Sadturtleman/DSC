@@ -1,0 +1,49 @@
+<?xml version="1.0"?>
+<configuration>
+
+    <!-- single-node 개발용 -->
+    <property>
+        <name>dfs.replication</name>
+        <value>1</value>
+    </property>
+    <property>
+        <name>dfs.namenode.name.dir</name>
+        <value>file:///data/namenode</value>
+    </property>
+
+    <!-- DataNode 에 3종 storage type 부여 (제안서 §4.1 HOT/WARM/COLD 매핑 검증용) -->
+    <property>
+        <name>dfs.datanode.data.dir</name>
+        <value>[SSD]file:///data/ssd,[DISK]file:///data/disk,[ARCHIVE]file:///data/archive</value>
+    </property>
+
+    <!-- Storage Policy 기능 활성화 -->
+    <property>
+        <name>dfs.storage.policy.enabled</name>
+        <value>true</value>
+    </property>
+
+    <!--
+        External SPS 모드 (제안서 §3.2)
+        - none     : SPS 비활성
+        - internal : NameNode 내부 스레드로 동작 (기본값, NN 부하)
+        - external : 별도 'hdfs sps' 데몬이 RPC 로 작업 수신
+    -->
+    <property>
+        <name>dfs.storage.policy.satisfier.mode</name>
+        <value>external</value>
+    </property>
+
+    <!-- External SPS 가 NN 으로부터 작업을 fetch 할 때 사용하는 RPC 주소 -->
+    <property>
+        <name>dfs.namenode.rpc-address</name>
+        <value>namenode:8020</value>
+    </property>
+
+    <!-- 컨테이너 환경: 호스트네임 검증 완화 -->
+    <property>
+        <name>dfs.namenode.datanode.registration.ip-hostname-check</name>
+        <value>false</value>
+    </property>
+
+</configuration>
