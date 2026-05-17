@@ -1,0 +1,34 @@
+database:
+  url: jdbc:postgresql://localhost:5432/dsc_tiering
+  username: dsc
+  password: dsc
+  pool:
+    maximum-pool-size: 8
+    minimum-idle: 2
+
+hdfs:
+  fs-default-name: hdfs://namenode:8020
+  user: hdfs
+  # 논리 티어 → HDFS 스토리지 정책 매핑 (제안서 §4.1)
+  policy-mapping:
+    HOT: ALL_SSD
+    WARM: ONE_SSD
+    COLD: COLD
+
+scheduler:
+  poll-interval-seconds: 10
+  # 시간대별 가변 정책 (제안서 §3.3)
+  windows:
+    - name: daytime
+      start: "09:00"
+      end:   "18:00"
+      batch-size: 50
+      inter-batch-wait-ms: 5000
+    - name: nighttime
+      start: "18:00"
+      end:   "09:00"
+      batch-size: 500
+      inter-batch-wait-ms: 1000
+  # 단일 배치 내 병렬 HDFS 호출 수 제한 (논리적 대역폭 관리)
+  concurrency: 8
+  max-retries: 3

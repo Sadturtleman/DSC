@@ -1,0 +1,31 @@
+database:
+  url: jdbc:postgresql://test:5432/test
+  username: tu
+  password: tp
+  pool:
+    maximum-pool-size: 5
+    minimum-idle: 1
+
+hdfs:
+  fs-default-name: hdfs://nn:8020
+  user: hdfs
+  policy-mapping:
+    HOT: ALL_SSD
+    WARM: ONE_SSD
+    COLD: COLD
+
+scheduler:
+  poll-interval-seconds: 5
+  windows:
+    - name: daytime
+      start: "09:00"
+      end:   "18:00"
+      batch-size: 50
+      inter-batch-wait-ms: 2000
+    - name: nighttime
+      start: "18:00"
+      end:   "09:00"
+      batch-size: 500
+      inter-batch-wait-ms: 500
+  concurrency: 4
+  max-retries: 3
