@@ -31,11 +31,11 @@ YARN Service Framework를 통해 단일 JVM 컨테이너로 기동되며, 하나
 모든 파일 이동 작업은 PostgreSQL `pending_jobs` 테이블 상에서 엄격한 생명주기를 가집니다.
 
 ```mermaid
-graph LR
-    A[FSImage Parsed] -->|Scoring Worker| B(PENDING)
-    B -->|Scheduler Worker| C(DISPATCHED)
-    C -->|Tracker Worker (Success)| D(COMPLETED)
-    C -->|Tracker Worker (Timeout)| E(FAILED)
+flowchart LR
+    A[FSImage Parsed] -->|Scoring Worker| B[PENDING]
+    B -->|Scheduler Worker| C[DISPATCHED]
+    C -->|Tracker Worker: Success| D[COMPLETED]
+    C -->|Tracker Worker: Timeout| E[FAILED]
 ```
 
 - 각 Worker는 본인에게 할당된 역할(INSERT, DISPATCH, COMPLETE)만 수행하므로 **데드락(Deadlock)이나 Race Condition이 발생하지 않는 견고한 동시성 모델**을 보장합니다.
