@@ -68,15 +68,17 @@ HDFS의 스토리지 정책은 `dfs.datanode.data.dir`의 디렉터리 레이블
 │  │  │  RPC  :9000     │   │  ResourceManager      :8088  │   │  │
 │  │  │  WebUI:9870     │   │  NodeManager          :8042  │   │  │
 │  │  └────────┬────────┘   └──────────────┬───────────────┘   │  │
-│  │           │ FSImage 복사               │ YARN Service       │  │
-│  │           ↓ OIV 파싱                  │ Framework          │  │
-│  │  ┌────────────────┐   ┌───────────────▼───────────────┐   │  │
-│  │  │  fsimage_parser│   │     hdfs-auto-tiering         │   │  │
-│  │  │  scorer.py     │──▶│     (YARN Container)          │   │  │
-│  │  └────────────────┘   │  - FSImage 스캔 & 스코어링    │   │  │
-│  │                        │  - HdfsAdmin 정책 변경        │   │  │
-│  │                        │  - satisfyStoragePolicy 호출  │   │  │
-│  │                        └───────────────────────────────┘   │  │
+│  │           │ fetchImage (HTTP)          │ YARN Service       │  │
+│  │           │                            │ Framework          │  │
+│  │           │           ┌────────────────▼──────────────┐   │  │
+│  │           │           │   hdfs-auto-tiering           │   │  │
+│  │           └───────────▶   (YARN Container)            │   │  │
+│  │                       │ 1. [Scoring] FSImage Fetch    │   │  │
+│  │                       │    & Parse (OIV), DB Insert   │   │  │
+│  │                       │ 2. [Scheduler] 정책 변경        │   │  │
+│  │                       │    (satisfyStoragePolicy)     │   │  │
+│  │                       │ 3. [Tracker] 블록 위치 검증     │   │  │
+│  │                       └───────────────────────────────┘   │  │
 │  │                                                            │  │
 │  │  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐  │  │
 │  │  │ DataNode-0   │ │ DataNode-1   │ │ DataNode-2       │  │  │
@@ -268,12 +270,7 @@ readlink -f $(which java) | sed "s|/bin/java||"
 
 ## 7. Python 3 설치
 
-FSImage OIV 파싱 및 스코어링 파이프라인에 사용한다.
-
-```bash
-sudo apt install -y python3 python3-pip python3-venv
-pip3 install pandas pyyaml
-```
+*(본 가이드에서는 핵심 엔진이 All-in-Java로 통합되었으므로, 별도의 Python 환경 구축이 필수는 아닙니다. 기타 스크립트 테스트 용도로만 사용됩니다.)*
 
 ---
 
@@ -1282,26 +1279,23 @@ database:
 hdfs:
   fs-default-name: hdfs://localhost:9000
   user: ""
+  namenode-http-url: http://localhost:9870
   policy-mapping:
     HOT: ALL_SSD
     WARM: ONE_SSD
     COLD: COLD
 
-scheduler:
-  poll-interval-seconds: 10
-  windows:
-    - name: daytime
-      start: "09:00"
-      end:   "18:00"
-      batch-size: 50
-      inter-batch-wait-ms: 5000
-    - name: nighttime
-      start: "18:00"
-      end:   "09:00"
-      batch-size: 500
-      inter-batch-wait-ms: 1000
-  concurrency: 8
-  max-retries: 3
+workers:
+  scoring:
+    cron: "0 0 0 * * ?"  # 매일 자정 스코어링
+    weight-access-time: 0.7
+    weight-file-size: 0.3
+  scheduler:
+    poll-interval-seconds: 10
+    concurrency: 8
+  tracker:
+    poll-interval-seconds: 30
+    timeout-hours: 12
 EOF
 ```
 
@@ -1365,10 +1359,10 @@ cat > ~/hdfs-auto-tiering-service.json << EOF
     {
       "name": "batch-scheduler",
       "number_of_containers": 1,
-      "launch_command": "java -Xmx384m -jar ./hdfs-auto-tiering.jar ./hdfs-auto-tiering-config.yaml",
+      "launch_command": "java -Xmx1024m -jar ./hdfs-auto-tiering.jar ./hdfs-auto-tiering-config.yaml",
       "resource": {
         "cpus": 1,
-        "memory": "512"
+        "memory": "1536"
       },
       "configuration": {
         "env": {
@@ -1420,26 +1414,16 @@ HADOOP_CONF_DIR=~/hadoop-conf/namenode \
 
 http://localhost:8088 → **Services** 탭에서도 확인할 수 있다.
 
-### 18-7. FSImage OIV 파이프라인 연계
+### 18-7. 내부 Scoring Engine 메커니즘 (FSImage OIV 파이프라인 연계)
 
-YARN 서비스 내부의 파이프라인이 FSImage를 직접 파싱하는 경우, 아래와 같이 Active NameNode의 FSImage를 수동으로 복사하여 테스트할 수 있다.
+새로운 아키텍처에서는 외부 파이썬 스크립트 대신 Java 컨테이너 내부의 `Scoring Worker`가 직접 FSImage를 처리합니다.
 
-```bash
-# FSImage 복사 (namenode current/ 디렉터리에서)
-FSIMAGE=$(ls -t ~/hadoop-data/namenode/current/fsimage_0* 2>/dev/null | head -1)
-cp "$FSIMAGE" /tmp/fsimage_latest
+로직은 내부적으로 다음과 같이 동작합니다:
+1. `DFSAdmin.fetchImage` API를 호출하여 NameNode로부터 최신 `fsimage`를 다운로드.
+2. `OfflineImageViewerPB` API를 사용하여 메모리 상에서 이미지를 텍스트/객체 형태로 파싱.
+3. 우선순위 가중치를 계산하고 PostgreSQL에 `PENDING` 상태로 일괄(Insert Batch) 삽입.
 
-# OIV로 CSV 변환
-HADOOP_CONF_DIR=~/hadoop-conf/namenode \
-  hdfs oiv \
-  -p Delimited \
-  -delimiter "," \
-  -i /tmp/fsimage_latest \
-  -o /tmp/fsimage_parsed.csv
-
-# 파싱 확인
-head -5 /tmp/fsimage_parsed.csv
-```
+*(해당 과정은 데몬 내부에서 자동 수행되므로 사용자가 수동으로 개입할 필요가 없습니다.)*
 
 ### 18-8. 서비스 관리 명령
 
@@ -1581,6 +1565,8 @@ fi
 echo "확인 성공"
 
 echo "=== 테스트 3: DB 상태 전이 삽입 (HOT->COLD) ==="
+# 원래는 Scoring Engine이 자정에 자동으로 FSImage를 파싱하여 아래와 같이 INSERT 하지만,
+# 본 테스트에서는 실시간 E2E 동작을 검증하기 위해 강제로 PENDING 작업을 주입합니다.
 FILE_SIZE_BYTES=$((10 * 1048576))
 $PSQL_CMD -c "INSERT INTO pending_jobs (file_path, file_size_bytes, current_tier, target_tier, priority_score, status, scored_at) VALUES ('${TEST_FILE}', ${FILE_SIZE_BYTES}, 'HOT', 'COLD', 100.0, 'PENDING', NOW());"
 
