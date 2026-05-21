@@ -92,23 +92,39 @@ edu.dsc.tiering
 
 ## 상태 전이 흐름
 FSImage 수집
+
 │
+
 ▼
+
 ScoringEngine ──────────────────────────► pending_jobs (PENDING)
+
 │
+
 ▼
+
 BatchScheduler + HdfsApiCaller
+
 │
+
 setStoragePolicy + satisfyStoragePolicy
+
 │
+
 ▼
+
 pending_jobs (DISPATCHED)
+
 │
+
 ▼
-CompletionTracker
-+ HdfsPolicyChecker
-                  │
-┌─────────────────┴──────────────────┐
+
+CompletionTracker + HdfsPolicyChecker
+
+│
+
+├────────────────────────────────────┐
+
 ▼                                    ▼
 COMPLETED                          FAILED
 (블록 이동 95% 완료)              (타임아웃 초과)
