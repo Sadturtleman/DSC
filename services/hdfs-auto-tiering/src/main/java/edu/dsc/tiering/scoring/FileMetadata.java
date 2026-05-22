@@ -16,8 +16,8 @@ public class FileMetadata {
     }
 
     public String path() { return path; }
-    public long size() { return size; }
-    public long atime() { return atime; }
+    public long fileSizeBytes() { return size; }
+    public long accessTimeMs() { return atime; }
     public long mtime() { return mtime; }
     public int storagePolicy() { return storagePolicy; }
 }

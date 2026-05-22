@@ -113,7 +113,7 @@ public class PendingJobRepository {
              PreparedStatement ps = c.prepareStatement(sql)) {
             for (var job : jobs) {
                 ps.setString(1, job.meta().path());
-                ps.setLong(2, job.meta().size());
+                ps.setLong(2, job.meta().fileSizeBytes());
                 ps.setString(3, job.currentTier().name());
                 ps.setString(4, job.targetTier().name());
                 ps.setDouble(5, job.priorityScore());
