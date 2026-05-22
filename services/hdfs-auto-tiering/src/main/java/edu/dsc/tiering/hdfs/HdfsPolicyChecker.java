@@ -59,8 +59,8 @@ public class HdfsPolicyChecker implements AutoCloseable {
         log.info("HdfsPolicyChecker 초기화. NN={}", fsDefaultName);
     }
 
-    /** 테스트용 — 이미 생성된 DFS 주입 */
-    HdfsPolicyChecker(DistributedFileSystem dfs) {
+    /** Already-created DFS injection for tests and embedded use. */
+    public HdfsPolicyChecker(DistributedFileSystem dfs) {
         this.dfs = dfs;
     }
 
@@ -120,7 +120,7 @@ public class HdfsPolicyChecker implements AutoCloseable {
         if (isMixed) return hits > 0;
 
         double ratio = (double) hits / total;
-        log.debug("완료율 tier={} {}/{} = {:.2f}", tier, hits, total, ratio);
+        log.debug("완료율 tier={} {}/{} = {}", tier, hits, total, ratio);
         return ratio >= COMPLETION_RATIO;
     }
 

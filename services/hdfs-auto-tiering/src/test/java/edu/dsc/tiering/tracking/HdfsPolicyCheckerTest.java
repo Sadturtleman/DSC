@@ -17,7 +17,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -36,7 +37,7 @@ class HdfsPolicyCheckerTest {
         mockDfs    = mock(DistributedFileSystem.class);
         mockClient = mock(DFSClient.class);
         when(mockDfs.getClient()).thenReturn(mockClient);
-        checker    = new HdfsPolicyChecker(mockDfs); // package-private 생성자
+        checker    = new HdfsPolicyChecker(mockDfs);
     }
 
     // ── 헬퍼 ─────────────────────────────────────────────────────────────
@@ -81,14 +82,14 @@ class HdfsPolicyCheckerTest {
     @DisplayName("COLD: 모든 블록 ARCHIVE → true")
     void cold_allArchive() throws Exception {
         givenBlocks("/cold/file.log", StorageType.ARCHIVE);
-        assertThat(checker.isSatisfied("/cold/file.log", Tier.COLD)).isTrue();
+        assertTrue(checker.isSatisfied("/cold/file.log", Tier.COLD));
     }
 
     @Test
     @DisplayName("COLD: 모든 블록 DISK → false")
     void cold_allDisk() throws Exception {
         givenBlocks("/cold/file.log", StorageType.DISK);
-        assertThat(checker.isSatisfied("/cold/file.log", Tier.COLD)).isFalse();
+        assertFalse(checker.isSatisfied("/cold/file.log", Tier.COLD));
     }
 
     @Test
@@ -99,7 +100,7 @@ class HdfsPolicyCheckerTest {
         for (int i = 0; i < 19; i++) types.add(new StorageType[]{StorageType.ARCHIVE});
         types.add(new StorageType[]{StorageType.DISK});
         givenMultipleBlocks("/cold/file.log", types);
-        assertThat(checker.isSatisfied("/cold/file.log", Tier.COLD)).isTrue();
+        assertTrue(checker.isSatisfied("/cold/file.log", Tier.COLD));
     }
 
     @Test
@@ -110,7 +111,7 @@ class HdfsPolicyCheckerTest {
         for (int i = 0; i < 47; i++) types.add(new StorageType[]{StorageType.ARCHIVE});
         for (int i = 0; i < 3;  i++) types.add(new StorageType[]{StorageType.DISK});
         givenMultipleBlocks("/cold/file.log", types);
-        assertThat(checker.isSatisfied("/cold/file.log", Tier.COLD)).isFalse();
+        assertFalse(checker.isSatisfied("/cold/file.log", Tier.COLD));
     }
 
     // ── HOT 정책 ──────────────────────────────────────────────────────────
@@ -119,7 +120,7 @@ class HdfsPolicyCheckerTest {
     @DisplayName("HOT: 모든 블록 SSD → true")
     void hot_allSsd() throws Exception {
         givenBlocks("/hot/file.orc", StorageType.SSD);
-        assertThat(checker.isSatisfied("/hot/file.orc", Tier.HOT)).isTrue();
+        assertTrue(checker.isSatisfied("/hot/file.orc", Tier.HOT));
     }
 
     @Test
@@ -128,7 +129,7 @@ class HdfsPolicyCheckerTest {
         givenMultipleBlocks("/hot/file.orc", List.of(
                 new StorageType[]{StorageType.SSD},
                 new StorageType[]{StorageType.DISK}));
-        assertThat(checker.isSatisfied("/hot/file.orc", Tier.HOT)).isFalse();
+        assertFalse(checker.isSatisfied("/hot/file.orc", Tier.HOT));
     }
 
     // ── WARM 정책 ─────────────────────────────────────────────────────────
@@ -140,14 +141,14 @@ class HdfsPolicyCheckerTest {
                 new StorageType[]{StorageType.SSD},
                 new StorageType[]{StorageType.DISK},
                 new StorageType[]{StorageType.DISK}));
-        assertThat(checker.isSatisfied("/warm/file.parquet", Tier.WARM)).isTrue();
+        assertTrue(checker.isSatisfied("/warm/file.parquet", Tier.WARM));
     }
 
     @Test
     @DisplayName("WARM: SSD 없이 모두 DISK → false")
     void warm_noSsd() throws Exception {
         givenBlocks("/warm/file.parquet", StorageType.DISK);
-        assertThat(checker.isSatisfied("/warm/file.parquet", Tier.WARM)).isFalse();
+        assertFalse(checker.isSatisfied("/warm/file.parquet", Tier.WARM));
     }
 
     // ── 엣지 케이스 ───────────────────────────────────────────────────────
@@ -163,13 +164,13 @@ class HdfsPolicyCheckerTest {
         when(mockClient.getLocatedBlocks(anyString(), anyLong(), anyLong()))
                 .thenReturn(blocks);
 
-        assertThat(checker.isSatisfied("/empty/file", Tier.COLD)).isFalse();
+        assertFalse(checker.isSatisfied("/empty/file", Tier.COLD));
     }
 
     @Test
     @DisplayName("IOException (NN 다운) → false, 예외 미전파")
     void ioException_returnsFalse() throws Exception {
         when(mockDfs.getFileStatus(any())).thenThrow(new IOException("NN down"));
-        assertThat(checker.isSatisfied("/fail/file", Tier.COLD)).isFalse();
+        assertFalse(checker.isSatisfied("/fail/file", Tier.COLD));
     }
 }
