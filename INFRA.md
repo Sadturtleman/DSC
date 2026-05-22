@@ -1968,7 +1968,8 @@ set -u
 # WARM (st1 - 처리량 최적화 HDD): $0.045 / GB
 # COLD (sc1 - 콜드 HDD): $0.015 / GB
 
-export HADOOP_CONF_DIR="${HADOOP_CONF_DIR:-$HOME/hadoop-conf/namenode}"
+export HADOOP_CONF_DIR="$HOME/hadoop-conf/namenode"
+export HADOOP_HOME="$HOME/hadoop"
 PSQL_CMD="psql -h localhost -U dsc -d dsc_tiering -qtA"
 SCENARIO=${1:-"CURRENT"}
 LOCAL_TMP_DIR="/tmp/tiering_scenario_data"

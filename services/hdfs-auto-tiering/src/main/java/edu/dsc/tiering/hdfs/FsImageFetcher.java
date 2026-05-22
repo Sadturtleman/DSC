@@ -134,9 +134,11 @@ public class FsImageFetcher implements AutoCloseable {
                 if (event == XMLStreamConstants.START_ELEMENT) {
                     currentTag = xsr.getLocalName();
                     if ("inode".equals(currentTag)) {
-                        inInode = true;
-                        currentId = 0; currentType = null; currentName = null;
-                        currentSize = 0; currentAtime = 0; currentMtime = 0; currentPolicy = 0;
+                        if (!inDirectory) {
+                            inInode = true;
+                            currentId = 0; currentType = null; currentName = null;
+                            currentSize = 0; currentAtime = 0; currentMtime = 0; currentPolicy = 0;
+                        }
                     } else if ("directory".equals(currentTag)) {
                         inDirectory = true;
                         dirParentId = 0;
@@ -158,7 +160,7 @@ public class FsImageFetcher implements AutoCloseable {
                     } else if (inDirectory) {
                         if ("parent".equals(currentTag)) {
                             dirParentId = Long.parseLong(text);
-                        } else if ("child".equals(currentTag)) {
+                        } else if ("child".equals(currentTag) || "inode".equals(currentTag)) {
                             long childId = Long.parseLong(text);
                             childToParent.put(childId, dirParentId);
                         }

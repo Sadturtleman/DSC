@@ -153,7 +153,9 @@ public class PendingJobRepository {
             }
             int[] results = ps.executeBatch();
             for (int r : results) {
-                if (r > 0) insertedCount += r;
+                if (r > 0 || r == java.sql.Statement.SUCCESS_NO_INFO) {
+                    insertedCount++;
+                }
             }
         }
         return insertedCount;

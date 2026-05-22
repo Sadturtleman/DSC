@@ -124,6 +124,10 @@ public class ScoringEngine implements Runnable {
         // 2. 스코어링: 이동 대상 필터링 + 순위 기반 우선순위 계산
         List<ScoredJob> jobs = score(allFiles);
         log.info("이동 대상 파일 수={} / 전체={}", jobs.size(), allFiles.size());
+        for (ScoredJob job : jobs) {
+            log.info("  이동 대상: path={} {}→{} priority={}",
+                    job.meta().path(), job.currentTier(), job.targetTier(), job.priorityScore());
+        }
 
         // 3. DB 배치 INSERT
         int inserted = batchInsert(jobs);
