@@ -158,22 +158,35 @@ public class FsImageFetcher implements AutoCloseable {
                     String text = textBuffer.toString().trim();
                     textBuffer.setLength(0);
                     
+                    if (inInode && "name".equals(endTag)) {
+                        // Handle empty name for root directory
+                        if (currentName == null) currentName = text; 
+                    }
+
                     if (!text.isEmpty()) {
                         if (inInode) {
                             switch (endTag) {
-                                case "id": currentId = Long.parseLong(text); break;
+                                case "id": 
+                                    if (currentId == 0) currentId = Long.parseLong(text); 
+                                    break;
                                 case "type": currentType = text; break;
-                                case "name": currentName = text; break;
+                                case "name": 
+                                    if (currentName == null) currentName = text; 
+                                    break;
                                 case "numBytes": currentSize += Long.parseLong(text); break;
                                 case "atime": currentAtime = Long.parseLong(text); break;
                                 case "mtime": currentMtime = Long.parseLong(text); break;
-                                case "storagePolicy": currentPolicy = Integer.parseInt(text); break;
+                                case "storagePolicyId": currentPolicy = Integer.parseInt(text); break;
                             }
                         } else if (inDirectory) {
                             if ("parent".equals(endTag)) {
                                 dirParentId = Long.parseLong(text);
-                            } else if ("child".equals(endTag) || "inode".equals(endTag)) {
-                                currentChildren.add(Long.parseLong(text));
+                            } else if ("child".equals(endTag) || "inode".equals(endTag) || "refChildren".equals(endTag) || "ref".equals(endTag)) {
+                                try {
+                                    currentChildren.add(Long.parseLong(text));
+                                } catch (NumberFormatException e) {
+                                    log.debug("Invalid child ID format: {}", text);
+                                }
                             }
                         }
                     }
@@ -213,17 +226,19 @@ public class FsImageFetcher implements AutoCloseable {
         StringBuilder sb = new StringBuilder();
         long curr = id;
         long originalId = id;
-        while (curr != 0) {
+        int depth = 0;
+        while (curr != 0 && depth < 256) {
             InodeRecord rec = inodes.get(curr);
             if (rec != null && rec.name != null && !rec.name.isEmpty()) {
                 sb.insert(0, "/" + rec.name);
             }
             long next = childToParent.getOrDefault(curr, 0L);
             if (next == 0 && curr != 16385) { // 16385 is usually the root INode
-                log.debug("Path reconstruction stopped early. Parent missing for INode id={}, name={}", 
-                        curr, rec != null ? rec.name : "null");
+                log.warn("Path reconstruction stopped early. Parent missing for INode id={}, name={}. Current reconstructed path: {}", 
+                        curr, rec != null ? rec.name : "null", sb.toString());
             }
             curr = next;
+            depth++;
         }
         String path = sb.toString();
         if (path.isEmpty()) path = "/";
