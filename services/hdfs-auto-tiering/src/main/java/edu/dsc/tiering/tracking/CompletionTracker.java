@@ -84,7 +84,7 @@ public class CompletionTracker implements Runnable {
      * 한 폴링 사이클을 실행한다.
      * {@code package-private} 으로 노출해 {@link CompletionTrackerTest} 에서 직접 호출한다.
      */
-    void runCycle() {
+    void runCycle() throws java.sql.SQLException {
         // Step 1: DISPATCHED 행 점유 → 즉시 커밋 (락 해제)
         List<PendingJob> jobs = repo.claimBatch(cfg.batchSize());
         if (jobs.isEmpty()) {
