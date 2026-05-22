@@ -128,6 +128,11 @@ public class CompletionTracker implements Runnable {
                     continue;
                 } catch (ExecutionException e) {
                     Throwable cause = e.getCause();
+                    if (cause instanceof RuntimeException && cause.getMessage() != null && cause.getMessage().startsWith("FileNotFoundException")) {
+                        log.warn("File deleted during tracking id={} path={}", job.jobId(), job.filePath());
+                        repo.recordHdfsFailure(job.jobId(), cause.getMessage(), 0);
+                        continue;
+                    }
                     log.error("HDFS check error id={} path={}: {}",
                             job.jobId(), job.filePath(),
                             cause == null ? e.getMessage() : cause.getMessage());

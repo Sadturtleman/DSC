@@ -73,6 +73,7 @@ public class HdfsPolicyChecker implements AutoCloseable {
         this.completionRatio = validateCompletionRatio(completionRatio);
     }
 
+
     // ── 공개 API ────────────────────────────────────────────────────────
 
     /**
@@ -92,6 +93,9 @@ public class HdfsPolicyChecker implements AutoCloseable {
             }
             return evaluate(blocks.getLocatedBlocks(), targetTier);
 
+        } catch (java.io.FileNotFoundException e) {
+            log.warn("파일 삭제됨. 더 이상 추적할 수 없음 path={}", filePath);
+            throw new RuntimeException("FileNotFoundException: " + e.getMessage(), e);
         } catch (IOException e) {
             log.error("HDFS 블록 조회 실패 path={}: {}", filePath, e.getMessage());
             return false;

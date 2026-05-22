@@ -117,7 +117,6 @@ public class FsImageFetcher implements AutoCloseable {
 
         try {
             XMLStreamReader xsr = factory.createXMLStreamReader(xmlStream);
-            String currentTag = null;
             boolean inInode = false;
             boolean inDirectory = false;
             
@@ -129,18 +128,21 @@ public class FsImageFetcher implements AutoCloseable {
             
             long dirParentId = 0;
             List<Long> currentChildren = new ArrayList<>();
+            StringBuilder textBuffer = new StringBuilder();
 
             while (xsr.hasNext()) {
                 int event = xsr.next();
                 if (event == XMLStreamConstants.START_ELEMENT) {
-                    currentTag = xsr.getLocalName();
-                    if ("inode".equals(currentTag)) {
+                    String tagName = xsr.getLocalName();
+                    textBuffer.setLength(0); // clear buffer
+                    
+                    if ("inode".equals(tagName)) {
                         if (!inDirectory) {
                             inInode = true;
                             currentId = 0; currentType = null; currentName = null;
                             currentSize = 0; currentAtime = 0; currentMtime = 0; currentPolicy = 0;
                         }
-                    } else if ("directory".equals(currentTag)) {
+                    } else if ("directory".equals(tagName)) {
                         inDirectory = true;
                         dirParentId = 0;
                         currentChildren.clear();
@@ -150,28 +152,32 @@ public class FsImageFetcher implements AutoCloseable {
                         }
                     }
                 } else if (event == XMLStreamConstants.CHARACTERS) {
-                    String text = xsr.getText().trim();
-                    if (text.isEmpty()) continue;
-                    
-                    if (inInode) {
-                        switch (currentTag) {
-                            case "id": currentId = Long.parseLong(text); break;
-                            case "type": currentType = text; break;
-                            case "name": currentName = text; break;
-                            case "numBytes": currentSize += Long.parseLong(text); break;
-                            case "atime": currentAtime = Long.parseLong(text); break;
-                            case "mtime": currentMtime = Long.parseLong(text); break;
-                            case "storagePolicy": currentPolicy = Integer.parseInt(text); break;
-                        }
-                    } else if (inDirectory) {
-                        if ("parent".equals(currentTag)) {
-                            dirParentId = Long.parseLong(text);
-                        } else if ("child".equals(currentTag) || "inode".equals(currentTag)) {
-                            currentChildren.add(Long.parseLong(text));
-                        }
-                    }
+                    textBuffer.append(xsr.getText());
                 } else if (event == XMLStreamConstants.END_ELEMENT) {
                     String endTag = xsr.getLocalName();
+                    String text = textBuffer.toString().trim();
+                    textBuffer.setLength(0);
+                    
+                    if (!text.isEmpty()) {
+                        if (inInode) {
+                            switch (endTag) {
+                                case "id": currentId = Long.parseLong(text); break;
+                                case "type": currentType = text; break;
+                                case "name": currentName = text; break;
+                                case "numBytes": currentSize += Long.parseLong(text); break;
+                                case "atime": currentAtime = Long.parseLong(text); break;
+                                case "mtime": currentMtime = Long.parseLong(text); break;
+                                case "storagePolicy": currentPolicy = Integer.parseInt(text); break;
+                            }
+                        } else if (inDirectory) {
+                            if ("parent".equals(endTag)) {
+                                dirParentId = Long.parseLong(text);
+                            } else if ("child".equals(endTag) || "inode".equals(endTag)) {
+                                currentChildren.add(Long.parseLong(text));
+                            }
+                        }
+                    }
+
                     if ("inode".equals(endTag) && inInode) {
                         inodes.put(currentId, new InodeRecord(currentId, currentType, currentName, currentSize, currentAtime, currentMtime, currentPolicy));
                         inInode = false;
@@ -181,7 +187,6 @@ public class FsImageFetcher implements AutoCloseable {
                         }
                         inDirectory = false;
                     }
-                    currentTag = null;
                 }
             }
             xsr.close();
@@ -207,15 +212,23 @@ public class FsImageFetcher implements AutoCloseable {
     private String buildPath(long id, Map<Long, InodeRecord> inodes, Map<Long, Long> childToParent) {
         StringBuilder sb = new StringBuilder();
         long curr = id;
+        long originalId = id;
         while (curr != 0) {
             InodeRecord rec = inodes.get(curr);
             if (rec != null && rec.name != null && !rec.name.isEmpty()) {
                 sb.insert(0, "/" + rec.name);
             }
-            curr = childToParent.getOrDefault(curr, 0L);
+            long next = childToParent.getOrDefault(curr, 0L);
+            if (next == 0 && curr != 16385) { // 16385 is usually the root INode
+                log.debug("Path reconstruction stopped early. Parent missing for INode id={}, name={}", 
+                        curr, rec != null ? rec.name : "null");
+            }
+            curr = next;
         }
         String path = sb.toString();
-        return path.isEmpty() ? "/" : path;
+        if (path.isEmpty()) path = "/";
+        log.debug("Reconstructed path for file INode {} -> {}", originalId, path);
+        return path;
     }
 
     private static class InodeRecord {

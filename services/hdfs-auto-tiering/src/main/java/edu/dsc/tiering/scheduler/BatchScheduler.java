@@ -68,6 +68,13 @@ public class BatchScheduler implements AutoCloseable {
             workers.submit(() -> {
                 try {
                     hdfs.applyTier(job.filePath(), job.targetTier());
+                } catch (java.io.FileNotFoundException e) {
+                    log.warn("File deleted before tiering jobId={} path={}", job.jobId(), job.filePath());
+                    try {
+                        repo.recordHdfsFailure(job.jobId(), "FileNotFoundException: " + e.getMessage(), 0);
+                    } catch (SQLException dbex) {
+                        log.error("Failed to record permanent failure for jobId={}", job.jobId(), dbex);
+                    }
                 } catch (IOException | RuntimeException e) {
                     log.warn("HDFS call failed jobId={} path={}: {}",
                             job.jobId(), job.filePath(), e.toString());
