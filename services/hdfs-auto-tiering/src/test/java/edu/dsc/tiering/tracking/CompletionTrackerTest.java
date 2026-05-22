@@ -64,7 +64,7 @@ class CompletionTrackerTest {
 
     @Test
     @DisplayName("DISPATCHED job 없음 → checker / repo 갱신 미호출")
-    void emptyBatch_noOp() {
+    void emptyBatch_noOp() throws Exception {
         doReturn(List.of()).when(mockRepo).claimBatch(anyInt());
 
         tracker.runCycle();
@@ -79,7 +79,7 @@ class CompletionTrackerTest {
 
     @Test
     @DisplayName("블록 이동 완료 → markCompleted 호출")
-    void blockMoved_markCompleted() {
+    void blockMoved_markCompleted() throws Exception {
         PendingJob j = job(1L, Tier.COLD, 10);
         doReturn(List.of(j)).when(mockRepo).claimBatch(anyInt());
         when(mockChecker.isSatisfied(j.filePath(), Tier.COLD)).thenReturn(true);
@@ -93,7 +93,7 @@ class CompletionTrackerTest {
 
     @Test
     @DisplayName("블록 이동 미완료 → touchCheckedAt 호출, 상태 변경 없음")
-    void blockNotMoved_touchCheckedAt() {
+    void blockNotMoved_touchCheckedAt() throws Exception {
         PendingJob j = job(2L, Tier.COLD, 10);
         doReturn(List.of(j)).when(mockRepo).claimBatch(anyInt());
         when(mockChecker.isSatisfied(j.filePath(), Tier.COLD)).thenReturn(false);
@@ -107,7 +107,7 @@ class CompletionTrackerTest {
 
     @Test
     @DisplayName("타임아웃(60분) 초과 → markFailed 호출 (checker 결과 무관)")
-    void timeout_markFailed() {
+    void timeout_markFailed() throws Exception {
         PendingJob j = job(3L, Tier.COLD, 90); // 90분 전 DISPATCHED
         doReturn(List.of(j)).when(mockRepo).claimBatch(anyInt());
         when(mockChecker.isSatisfied(any(), any())).thenReturn(true); // 완료여도 타임아웃 우선
@@ -122,7 +122,7 @@ class CompletionTrackerTest {
 
     @Test
     @DisplayName("배치 내 일부 완료 + 일부 미완료 → 각 job 독립 처리")
-    void partialBatch_independent() {
+    void partialBatch_independent() throws Exception {
         PendingJob ok   = job(10L, Tier.COLD, 5);
         PendingJob fail = job(11L, Tier.COLD, 5);
         doReturn(List.of(ok, fail)).when(mockRepo).claimBatch(anyInt());
@@ -138,7 +138,7 @@ class CompletionTrackerTest {
 
     @Test
     @DisplayName("배치 내 일부 타임아웃 + 일부 정상 → 독립 처리")
-    void partialTimeout_independent() {
+    void partialTimeout_independent() throws Exception {
         PendingJob fresh   = job(20L, Tier.COLD,  5);
         PendingJob expired = job(21L, Tier.COLD, 90);
         doReturn(List.of(fresh, expired)).when(mockRepo).claimBatch(anyInt());
@@ -154,7 +154,7 @@ class CompletionTrackerTest {
 
     @Test
     @DisplayName("HOT 정책 완료 → markCompleted")
-    void hot_completed() {
+    void hot_completed() throws Exception {
         PendingJob j = job(30L, Tier.HOT, 5);
         doReturn(List.of(j)).when(mockRepo).claimBatch(anyInt());
         when(mockChecker.isSatisfied(j.filePath(), Tier.HOT)).thenReturn(true);
@@ -166,7 +166,7 @@ class CompletionTrackerTest {
 
     @Test
     @DisplayName("WARM 정책 완료 → markCompleted")
-    void warm_completed() {
+    void warm_completed() throws Exception {
         PendingJob j = job(31L, Tier.WARM, 5);
         doReturn(List.of(j)).when(mockRepo).claimBatch(anyInt());
         when(mockChecker.isSatisfied(j.filePath(), Tier.WARM)).thenReturn(true);
@@ -180,7 +180,7 @@ class CompletionTrackerTest {
 
     @Test
     @DisplayName("checker RuntimeException → touchCheckedAt, 다음 사이클에서 재시도")
-    void checkerException_touchCheckedAt() {
+    void checkerException_touchCheckedAt() throws Exception {
         PendingJob j = job(40L, Tier.COLD, 5);
         doReturn(List.of(j)).when(mockRepo).claimBatch(anyInt());
         when(mockChecker.isSatisfied(any(), any()))
