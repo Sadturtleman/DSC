@@ -1309,23 +1309,34 @@ database:
 hdfs:
   fs-default-name: hdfs://localhost:9000
   user: ""
-  namenode-http-url: http://localhost:9870
   policy-mapping:
     HOT: ALL_SSD
     WARM: ONE_SSD
     COLD: COLD
 
-workers:
-  scoring:
-    cron: "0 0 0 * * ?"  # 매일 자정 스코어링
-    weight-access-time: 0.7
-    weight-file-size: 0.3
-  scheduler:
-    poll-interval-seconds: 10
-    concurrency: 8
-  tracker:
-    poll-interval-seconds: 30
-    timeout-hours: 12
+scheduler:
+  poll-interval-seconds: 10
+  windows:
+    - name: daytime
+      start: "09:00"
+      end:   "18:00"
+      batch-size: 50
+      inter-batch-wait-ms: 5000
+    - name: nighttime
+      start: "18:00"
+      end:   "09:00"
+      batch-size: 500
+      inter-batch-wait-ms: 1000
+  concurrency: 8
+  max-retries: 3
+
+tracker:
+  poll-interval-seconds: 45
+  timeout-minutes: 60
+  batch-size: 20
+  completion-ratio: 0.95
+  max-workers: 5
+  nodename-semaphore: 3
 EOF
 ```
 
@@ -1376,7 +1387,24 @@ HADOOP_CONF_DIR=~/hadoop-conf/namenode yarn app -destroy sleeper-test
 HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs storagepolicies -unsetStoragePolicy -path /user/$(whoami)/.yarn
 ```
 
-### 18-4. YARN Service 정의 파일 작성
+### 18-4. 애플리케이션 배포 (GitHub Actions 자동 빌드)
+
+서버(인프라) 환경에는 소스코드가 존재하지 않으므로, 개발 PC에서 직접 빌드하고 파일을 복사(`scp`)하는 대신 **GitHub Actions와 Releases**를 활용하여 빌드 및 배포를 100% 자동화합니다.
+
+1. **로컬(개발 PC)에서 깃허브로 푸시 (자동 빌드 트리거)**
+   - 로컬 PC에서는 메이븐(Maven)을 설치하거나 직접 빌드할 필요가 전혀 없습니다.
+   - 코드를 수정한 후 `v1.0.0`과 같이 버전을 나타내는 태그(Tag)를 달아서 GitHub에 Push합니다.
+   ```bash
+   git tag v1.0.0
+   git push origin v1.0.0
+   ```
+   - GitHub Actions가 자동으로 백그라운드에서 코드를 빌드하고, 완성된 `hdfs-auto-tiering.jar` 파일을 해당 릴리즈(Release)의 첨부파일로 알아서 업로드해 줍니다.
+
+2. **서버 환경에서 배포 스크립트 실행**
+   - GitHub에 릴리즈가 완료되면, 본 문서 하단의 **[18-10. GitHub Releases 기반 자동 배포 스크립트]**(`deploy-auto-tiering.sh`)를 서버에서 실행하기만 하면 끝입니다. 서버가 최신 릴리즈의 `jar` 파일을 다운로드하고 HDFS에 올려 배포를 완료합니다.
+
+
+### 18-5. YARN Service 정의 파일 작성
 
 fat jar 형태이므로 `java -jar` 명령으로 기동하며, 환경에 맞게 Java 11 경로를 지정한다.
 
@@ -1387,7 +1415,7 @@ cat > ~/hdfs-auto-tiering-service.json << EOF
   "version": "1.0",
   "components": [
     {
-      "name": "hdfs-auto-tiering",
+      "name": "tiering-daemon",
       "number_of_containers": 1,
       "launch_command": "java -Xmx1024m -jar ./hdfs-auto-tiering.jar ./hdfs-auto-tiering-config.yaml",
       "resource": {
@@ -1423,14 +1451,14 @@ cat > ~/hdfs-auto-tiering-service.json << EOF
 EOF
 ```
 
-### 18-5. 서비스 등록 및 기동
+### 18-6. 서비스 등록 및 기동
 
 ```bash
 HADOOP_CONF_DIR=~/hadoop-conf/namenode \
   yarn app -launch hdfs-auto-tiering ~/hdfs-auto-tiering-service.json
 ```
 
-### 18-6. 서비스 상태 확인
+### 18-7. 서비스 상태 확인
 
 ```bash
 # CLI
@@ -1444,7 +1472,7 @@ HADOOP_CONF_DIR=~/hadoop-conf/namenode \
 
 http://localhost:8088 → **Services** 탭에서도 확인할 수 있다.
 
-### 18-7. 내부 Scoring Engine 메커니즘 (FSImage OIV 파이프라인 연계)
+### 18-8. 내부 Scoring Engine 메커니즘 (FSImage OIV 파이프라인 연계)
 
 새로운 아키텍처에서는 외부 파이썬 스크립트 대신 Java 컨테이너 내부의 `Scoring Worker`가 직접 FSImage를 처리합니다.
 
@@ -1468,7 +1496,7 @@ HADOOP_CONF_DIR=~/hadoop-conf/namenode yarn app -start hdfs-auto-tiering
 HADOOP_CONF_DIR=~/hadoop-conf/namenode yarn app -destroy hdfs-auto-tiering
 ```
 
-### 18-9. GitHub Releases 기반 자동 배포 스크립트
+### 18-10. GitHub Releases 기반 자동 배포 스크립트
 
 GitHub Releases에서 최신 jar 파일을 다운로드하여 HDFS에 통일된 이름(`hdfs-auto-tiering.jar`)으로 덮어쓰고, YARN 서비스를 재기동하는 스크립트이다.
 원본 코드(`pom.xml` 등) 수정 없이 스크립트 내부에서 파일명을 통일하여 처리한다.
