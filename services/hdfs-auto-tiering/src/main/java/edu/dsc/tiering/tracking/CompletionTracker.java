@@ -84,62 +84,66 @@ public class CompletionTracker implements Runnable {
      * 한 폴링 사이클을 실행한다.
      * {@code package-private} 으로 노출해 {@link CompletionTrackerTest} 에서 직접 호출한다.
      */
-    void runCycle() throws java.sql.SQLException {
-        // Step 1: DISPATCHED 행 점유 → 즉시 커밋 (락 해제)
-        List<PendingJob> jobs = repo.claimBatch(cfg.batchSize());
-        if (jobs.isEmpty()) {
-            log.debug("DISPATCHED job 없음");
-            return;
-        }
-        log.info("사이클 대상: {}개", jobs.size());
-
-        // Step 2: HDFS 병렬 검사
-        ExecutorService pool = Executors.newFixedThreadPool(cfg.maxWorkers());
-        List<Future<Boolean>> futures = jobs.stream()
-                .<Future<Boolean>>map(job -> pool.submit(() -> checkOne(job)))
-                .collect(Collectors.toList());
-        pool.shutdown();
+    void runCycle() {
         try {
-            // 최대 pollInterval 만큼 대기 — 초과 시 다음 사이클에서 재처리
-            pool.awaitTermination(cfg.pollIntervalSeconds() * 1000L, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return;
-        }
-
-        // Step 3: 결과 DB 반영
-        for (int i = 0; i < jobs.size(); i++) {
-            PendingJob job    = jobs.get(i);
-            Duration      elapsed = Duration.between(job.dispatchedAt(), java.time.OffsetDateTime.now());
-
-            // 타임아웃 판정 — HDFS 결과보다 우선
-            if (elapsed.toMinutes() >= cfg.timeoutMinutes()) {
-                repo.markFailed(job.jobId());
-                log.warn("TIMEOUT id={} path={} elapsed={}min",
-                        job.jobId(), job.filePath(), elapsed.toMinutes());
-                continue;
+            // Step 1: DISPATCHED 행 점유 → 즉시 커밋 (락 해제)
+            List<PendingJob> jobs = repo.claimBatch(cfg.batchSize());
+            if (jobs.isEmpty()) {
+                log.debug("DISPATCHED job 없음");
+                return;
             }
+            log.info("사이클 대상: {}개", jobs.size());
 
-            boolean done;
+            // Step 2: HDFS 병렬 검사
+            ExecutorService pool = Executors.newFixedThreadPool(cfg.maxWorkers());
+            List<Future<Boolean>> futures = jobs.stream()
+                    .<Future<Boolean>>map(job -> pool.submit(() -> checkOne(job)))
+                    .collect(Collectors.toList());
+            pool.shutdown();
             try {
-                done = futures.get(i).get();
+                // 최대 pollInterval 만큼 대기 — 초과 시 다음 사이클에서 재처리
+                pool.awaitTermination(cfg.pollIntervalSeconds() * 1000L, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
-            } catch (ExecutionException e) {
-                // HDFS 오류: DISPATCHED 유지, 다음 사이클에서 재시도
-                log.error("HDFS 검사 오류 id={} path={}: {}",
-                        job.jobId(), job.filePath(), e.getCause().getMessage());
-                repo.touchCheckedAt(job.jobId());
-                continue;
             }
 
-            if (done) {
-                repo.markCompleted(job.jobId());
-            } else {
-                repo.touchCheckedAt(job.jobId());
-                log.debug("이동 중 id={} path={}", job.jobId(), job.filePath());
+            // Step 3: 결과 DB 반영
+            for (int i = 0; i < jobs.size(); i++) {
+                PendingJob job    = jobs.get(i);
+                Duration      elapsed = Duration.between(job.dispatchedAt(), java.time.OffsetDateTime.now());
+
+                // 타임아웃 판정 — HDFS 결과보다 우선
+                if (elapsed.toMinutes() >= cfg.timeoutMinutes()) {
+                    repo.markFailed(job.jobId());
+                    log.warn("TIMEOUT id={} path={} elapsed={}min",
+                            job.jobId(), job.filePath(), elapsed.toMinutes());
+                    continue;
+                }
+
+                boolean done;
+                try {
+                    done = futures.get(i).get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                } catch (ExecutionException e) {
+                    // HDFS 오류: DISPATCHED 유지, 다음 사이클에서 재시도
+                    log.error("HDFS 검사 오류 id={} path={}: {}",
+                            job.jobId(), job.filePath(), e.getCause().getMessage());
+                    repo.touchCheckedAt(job.jobId());
+                    continue;
+                }
+
+                if (done) {
+                    repo.markCompleted(job.jobId());
+                } else {
+                    repo.touchCheckedAt(job.jobId());
+                    log.debug("이동 중 id={} path={}", job.jobId(), job.filePath());
+                }
             }
+        } catch (java.sql.SQLException e) {
+            throw new RuntimeException(e);
         }
     }
 
