@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS pending_jobs (
 
 -- scheduler 의 SKIP LOCKED 픽업을 위한 우선순위 인덱스
 CREATE INDEX IF NOT EXISTS idx_pending_jobs_pickup
-    ON pending_jobs (priority_score DESC, scored_at ASC)
+    ON pending_jobs (priority_score ASC, scored_at ASC)
     WHERE status = 'PENDING';
 
 -- tracker 의 타임아웃 스캔 인덱스

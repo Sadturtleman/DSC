@@ -1,13 +1,14 @@
 # HDFS Auto-Tiering YARN 서비스
 ## 인프라 구성 완전 가이드
 
-**환경**: Windows 11 + WSL2 Ubuntu 22.04 + Hadoop 3.4.1  
+**환경**: Windows 11 + WSL2 Ubuntu 22.04 + Hadoop 3.4.1
 **대상**: 클린 설치 Windows 11 데스크탑에서 처음부터 구성하는 경우
 
 ---
 
 ## 목차
 
+0. [사용법 (명령어 및 스크립트 요약)](#0-사용법-명령어-및-스크립트-요약)
 1. [아키텍처 개요](#1-아키텍처-개요)
 2. [시스템 요구사항](#2-시스템-요구사항)
 3. [WSL2 설치](#3-wsl2-설치)
@@ -28,6 +29,40 @@
 18. [Auto-Tiering YARN 서비스 배포](#18-auto-tiering-yarn-서비스-배포)
 19. [포트 참조표](#19-포트-참조표)
 20. [트러블슈팅](#20-트러블슈팅)
+21. [오토티어링 효용 검증 (비용 절감 리포트)](#21-오토티어링-효용-검증-비용-절감-리포트)
+
+---
+
+## 0. 사용법 (명령어 및 스크립트 요약)
+
+본 인프라와 서비스를 관리하기 위해 사용하는 스크립트 및 명령어의 용도와 사용 상황을 요약합니다.
+모든 쉘 스크립트는 서버(Ubuntu)의 `~/` 경로에 생성되어 있다고 가정합니다.
+
+### 0.1 인프라 (Hadoop/YARN) 전체 제어
+* **클러스터 기동 스크립트**: `~/hadoop-start.sh`
+  * **상황**: WSL2 인스턴스를 재시작했거나 클러스터 데몬이 내려간 경우, NameNode, DataNode(3대), ResourceManager, NodeManager, External SPS를 순서대로 모두 기동할 때 사용합니다.
+* **클러스터 종료 스크립트**: `~/hadoop-stop.sh`
+  * **상황**: YARN 서비스와 모든 Hadoop 관련 데몬을 안전하게 종료할 때 사용합니다.
+* **클러스터 완전 초기화**: (명령어 직접 입력, [20. 트러블슈팅](#처음부터-완전히-초기화해야-할-때) 참조)
+  * **상황**: HDFS 데이터가 손상되어 NameNode를 포맷하고 클러스터를 처음부터 다시 구성하고 싶을 때 사용합니다.
+
+### 0.2 YARN 서비스 (Auto-Tiering 데몬) 제어
+* **자동 배포 스크립트**: `~/deploy-auto-tiering.sh`
+  * **상황**: 개발 PC(Windows)에서 GitHub Repository에 새 버전을 릴리즈한 후, 서버(Ubuntu)에 새로운 버전의 데몬(JAR)을 다운로드하고 YARN에 자동으로 배포 및 재기동할 때 사용합니다.
+* **E2E 테스트 스크립트**: `~/test-auto-tiering.sh`
+  * **상황**: 자동 배포 스크립트를 통해 HDFS에 업로드된 JAR 파일을 기반으로, 전체 파이프라인(파일 업로드 -> FSImage Scoring -> 스케줄러 기동 -> HDFS 물리 블록 이동)이 정상 동작하는지 검증할 때 사용합니다.
+* **효용 검증 및 비용 절감 리포트**: `~/test-auto-tiering-savings.sh [A|B|C]`
+  * **상황**: 프로젝트 시연 시 E2E 이관 실적을 바탕으로 "스토리지 비용을 얼마나 절감했는지"를 계산합니다. 뒤에 `A`, `B`, `C` 인자를 붙이면 해당 시나리오에 맞춰 기가바이트(GB) 단위의 물리적 더미 파일을 생성하고 이관 테스트를 전체 수행한 뒤 절감액을 산출합니다.
+* **서비스 상태 확인**: `yarn app -status hdfs-auto-tiering`
+  * **상황**: YARN에 올라간 데몬 컨테이너가 정상적으로 실행(`STABLE`, `RUNNING`)되고 있는지 확인할 때 사용합니다.
+* **서비스 컨테이너 로그 확인**: `yarn logs -applicationId <application_id>`
+  * **상황**: 데몬 프로세스 내에서 에러가 발생했거나, YARN 서비스 기동이 실패했을 때 디버깅 목적으로 상세 로그를 조회할 때 사용합니다.
+
+### 0.3 데이터베이스 (PostgreSQL) 제어
+* **PostgreSQL 서비스 기동**: `sudo service postgresql start`
+  * **상황**: WSL2 재시작 후 서비스 구동 전 DB를 수동으로 띄워야 할 때 사용합니다.
+* **DB 접속 및 상태 조회**: `psql -h localhost -U dsc -d dsc_tiering`
+  * **상황**: `pending_jobs` 테이블에 작업 목록이 정상적으로 적재되었는지, 데몬 실행 과정에서 `status`(PENDING -> DISPATCHED -> IN_PROGRESS -> COMPLETED)가 올바르게 전이되는지 확인할 때 사용합니다.
 
 ---
 
@@ -610,6 +645,12 @@ cat > ~/hadoop-conf/namenode/yarn-site.xml << 'EOF'
     <value>org.apache.hadoop.yarn.server.nodemanager.DefaultContainerExecutor</value>
   </property>
 
+  <!-- YARN Service 프레임워크 의존성 경로 강제 지정 (버그 우회) -->
+  <property>
+    <name>yarn.service.framework.path</name>
+    <value>hdfs:///user/dsc/.yarn/system/services/service-dep.tar.gz</value>
+  </property>
+
 </configuration>
 EOF
 sed -i "s|HOMEDIR|$HOME|g" ~/hadoop-conf/namenode/yarn-site.xml
@@ -1166,7 +1207,44 @@ HADOOP_CONF_DIR=~/hadoop-conf/namenode yarn node -list
 
 `RUNNING` 상태 노드 1개가 표시되면 정상이다.
 
-### 15-5. Web UI 확인
+### 15-5. YARN Service 프레임워크 의존성 수동 업로드 (버그 우회)
+
+Hadoop 3.x YARN의 기본 의존성 파일 자동 업로드 로직에 버그(압축 실패, 경로 누락 등)가 존재하므로, 정상적인 `service-dep.tar.gz`를 수동으로 생성하여 HDFS에 업로드해야 한다.
+**주의**: 압축 시 디렉터리 구조 없이 모든 `jar` 파일이 최상단(root)에 위치하도록 평탄화(Flatten)해야 `Application Master`가 정상 기동된다.
+
+```bash
+# 1. 모든 jar를 평탄화하여 모을 임시 폴더 생성
+mkdir -p ~/tmp_yarn_jars
+rm -rf ~/tmp_yarn_jars/*
+
+# 2. YARN AM 구동에 필요한 모든 핵심/의존성 jar 파일을 한 곳으로 복사 (오류 무시)
+cp ~/hadoop/share/hadoop/common/*.jar ~/tmp_yarn_jars/ 2>/dev/null
+cp ~/hadoop/share/hadoop/common/lib/*.jar ~/tmp_yarn_jars/ 2>/dev/null
+cp ~/hadoop/share/hadoop/hdfs/*.jar ~/tmp_yarn_jars/ 2>/dev/null
+cp ~/hadoop/share/hadoop/hdfs/lib/*.jar ~/tmp_yarn_jars/ 2>/dev/null
+cp ~/hadoop/share/hadoop/yarn/*.jar ~/tmp_yarn_jars/ 2>/dev/null
+cp ~/hadoop/share/hadoop/yarn/lib/*.jar ~/tmp_yarn_jars/ 2>/dev/null
+
+# 3. 디렉터리 구조 없이 최상단에 압축
+cd ~/tmp_yarn_jars
+tar -czf ~/service-dep.tar.gz *.jar
+
+# 4. HDFS 업로드 경로 생성 및 업로드
+HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs dfs -mkdir -p /user/dsc/.yarn/system/services/
+HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs storagepolicies -setStoragePolicy -path /user/dsc/.yarn -policy ALL_SSD 2>/dev/null || true
+HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs dfs -rm -f /user/dsc/.yarn/system/services/service-dep.tar.gz
+HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs dfs -put ~/service-dep.tar.gz /user/dsc/.yarn/system/services/
+HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs storagepolicies -setStoragePolicy -path /user/dsc/.yarn/system/services/service-dep.tar.gz -policy ALL_SSD 2>/dev/null || true
+HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs storagepolicies -satisfyStoragePolicy -path /user/dsc/.yarn/system/services/service-dep.tar.gz 2>/dev/null || true
+
+# 5. 임시 찌꺼기 정리
+rm -rf ~/tmp_yarn_jars ~/service-dep.tar.gz
+cd ~
+```
+
+업로드 후, 본 문서의 `yarn-site.xml` 설정에 명시된 `yarn.service.framework.path` 속성을 통해 YARN이 이 파일을 참조하게 된다.
+
+### 15-6. Web UI 확인
 
 Windows 브라우저에서 접속한다.
 
@@ -1303,40 +1381,47 @@ database:
   username: dsc
   password: dsc
   pool:
-    maximum-pool-size: 8
-    minimum-idle: 2
+    maximumPoolSize: 8
+    minimumIdle: 2
 
 hdfs:
-  fs-default-name: hdfs://localhost:9000
+  fsDefaultName: hdfs://localhost:9000
   user: ""
-  policy-mapping:
+  policyMapping:
     HOT: ALL_SSD
     WARM: ONE_SSD
     COLD: COLD
 
+scoring:
+  enabled: true
+  intervalSeconds: 86400
+  weightAccessTime: 0.5
+  weightFileSize: 0.5
+  localFsimageDir: /tmp/hdfs-auto-tiering-fsimage
+
 scheduler:
-  poll-interval-seconds: 10
+  pollIntervalSeconds: 10
   windows:
     - name: daytime
       start: "09:00"
       end:   "18:00"
-      batch-size: 50
-      inter-batch-wait-ms: 5000
+      batchSize: 50
+      interBatchWaitMs: 5000
     - name: nighttime
       start: "18:00"
       end:   "09:00"
-      batch-size: 500
-      inter-batch-wait-ms: 1000
+      batchSize: 500
+      interBatchWaitMs: 1000
   concurrency: 8
-  max-retries: 3
+  maxRetries: 3
 
 tracker:
-  poll-interval-seconds: 45
-  timeout-minutes: 60
-  batch-size: 20
-  completion-ratio: 0.95
-  max-workers: 5
-  nodename-semaphore: 3
+  pollIntervalSeconds: 45
+  timeoutMinutes: 60
+  batchSize: 20
+  completionRatio: 0.95
+  maxWorkers: 5
+  nodenameSemaphore: 3
 EOF
 ```
 
@@ -1383,8 +1468,8 @@ HADOOP_CONF_DIR=~/hadoop-conf/namenode \
 # 1. 테스트용 앱 강제 종료
 HADOOP_CONF_DIR=~/hadoop-conf/namenode yarn app -destroy sleeper-test
 
-# 2. 테스트 완료 후 YARN 시스템 디렉터리 정책을 기본값(HOT)으로 원상 복구
-HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs storagepolicies -unsetStoragePolicy -path /user/$(whoami)/.yarn
+# (주의) 단일 DISK 노드 환경 제약으로 인해 실제 서비스 배포 시에도 .yarn 디렉터리는 ALL_SSD 정책을 유지해야 합니다.
+# 절대 정책 해제(unsetStoragePolicy)를 수행하지 마세요.
 ```
 
 ### 18-4. 애플리케이션 배포 (GitHub Actions 자동 빌드)
@@ -1451,9 +1536,17 @@ cat > ~/hdfs-auto-tiering-service.json << EOF
 EOF
 ```
 
-### 18-6. 서비스 등록 및 기동
+### 18-6. (수동 배포 시) JAR 업로드 및 서비스 기동
+
+> **중요 참고**: 18-4의 GitHub Actions 자동 배포를 이용하는 경우, 이 단계를 수동으로 실행하지 말고 **바로 18-10의 `deploy-auto-tiering.sh` 스크립트를 실행**하세요. 스크립트 내부에서 다운로드 및 업로드, 런칭을 모두 수행합니다.
+> 아래는 스크립트를 사용하지 않고 100% 수동으로 배포할 때의 절차입니다.
 
 ```bash
+# 1. 빌드한 JAR 파일과 설정 파일을 HDFS에 먼저 업로드
+HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs dfs -put -f ~/hdfs-auto-tiering.jar /apps/hdfs-auto-tiering/lib/
+HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs dfs -put -f ~/hdfs-auto-tiering-config.yaml /apps/hdfs-auto-tiering/config/
+
+# 2. 서비스 런칭 (이미 존재한다는 오류 발생 시, yarn app -destroy hdfs-auto-tiering 후 재시도)
 HADOOP_CONF_DIR=~/hadoop-conf/namenode \
   yarn app -launch hdfs-auto-tiering ~/hdfs-auto-tiering-service.json
 ```
@@ -1540,10 +1633,23 @@ fi
 echo "HDFS 디렉터리 준비 및 업로드"
 hdfs dfs -mkdir -p "$HDFS_LIB_DIR"
 hdfs dfs -mkdir -p "$HDFS_CONFIG_DIR"
+
+# [긴급 패치 1] 배포 파일들을 dn0(SSD)에 쓰도록 강제
+hdfs storagepolicies -setStoragePolicy -path /apps -policy ALL_SSD 2>/dev/null || true
+
+# [긴급 패치 2] YARN이 백그라운드 서비스를 구동할 때 내부적으로 생성하는 메타데이터(.yarn) 파일들이
+# 통신이 막혀있는 dn1(DISK)으로 가는 것을 막기 위해 사용자 홈 디렉터리도 ALL_SSD로 강제 지정
+hdfs dfs -mkdir -p /user/dsc
+hdfs storagepolicies -setStoragePolicy -path /user/dsc -policy ALL_SSD 2>/dev/null || true
+
 hdfs dfs -put -f "${DOWNLOAD_DIR}/${TARGET_JAR_NAME}" "${HDFS_LIB_DIR}/${TARGET_JAR_NAME}"
+hdfs storagepolicies -setStoragePolicy -path "${HDFS_LIB_DIR}/${TARGET_JAR_NAME}" -policy ALL_SSD 2>/dev/null || true
+hdfs storagepolicies -satisfyStoragePolicy -path "${HDFS_LIB_DIR}/${TARGET_JAR_NAME}" 2>/dev/null || true
 
 if [ -f "$LOCAL_CONFIG" ]; then
     hdfs dfs -put -f "$LOCAL_CONFIG" "${HDFS_CONFIG_DIR}/hdfs-auto-tiering-config.yaml"
+    hdfs storagepolicies -setStoragePolicy -path "${HDFS_CONFIG_DIR}/hdfs-auto-tiering-config.yaml" -policy ALL_SSD 2>/dev/null || true
+    hdfs storagepolicies -satisfyStoragePolicy -path "${HDFS_CONFIG_DIR}/hdfs-auto-tiering-config.yaml" 2>/dev/null || true
 fi
 
 if yarn app -status "$YARN_SERVICE_NAME" > /dev/null 2>&1; then
@@ -1570,8 +1676,8 @@ chmod +x ~/deploy-auto-tiering.sh
 
 ### 18-10. E2E 검증 테스트 자동화 스크립트
 
-HDFS 파일 업로드, 정책 적용, DB 상태 변경(HOT->COLD), 스케줄러 기동 및 블록 이동 완료까지 자동 검증 후 생성된 테스트 데이터를 삭제(원상 복구)하는 스크립트이다.
-코드 변경 없이 로컬 빌드 경로의 원본 jar를 사용한다.
+HDFS 파일 업로드, 정책 적용, FSImage 기반 ScoringEngine 적재, 스케줄러 기동 및 블록 이동 완료까지 자동 검증 후 생성된 테스트 데이터를 삭제(원상 복구)하는 스크립트이다.
+배포 스크립트를 통해 HDFS에 업로드된 JAR 파일을 가져와 테스트를 진행한다.
 
 ```bash
 cat > ~/test-auto-tiering.sh << 'SCRIPT'
@@ -1585,7 +1691,7 @@ TEST_FILE="${TEST_DIR}/testfile.dat"
 LOCAL_TMP="/tmp/auto-tiering-e2e-testfile.dat"
 SCHEDULER_PID=""
 CONFIG_FILE="$HOME/hdfs-auto-tiering-config.yaml"
-JAR_FILE="$HOME/DSC/services/hdfs-auto-tiering/target/hdfs-auto-tiering-0.1.0-SNAPSHOT.jar"
+JAR_FILE="/tmp/hdfs-auto-tiering-e2e-test.jar"
 
 cleanup() {
     echo "=== 테스트 환경 정리 ==="
@@ -1595,16 +1701,30 @@ cleanup() {
     $PSQL_CMD -c "DELETE FROM pending_jobs WHERE file_path LIKE '${TEST_DIR}%';" 2>/dev/null || true
     hdfs dfs -rm -r -skipTrash "$TEST_DIR" 2>/dev/null || true
     rm -f "$LOCAL_TMP" 2>/dev/null || true
+    rm -f "$JAR_FILE" 2>/dev/null || true
 }
 trap cleanup EXIT
 
-echo "=== 사전 점검 ==="
-if [ ! -f "$JAR_FILE" ]; then
-    echo "빌드된 JAR 파일 누락: ${JAR_FILE}"
+echo "=== 사전 점검 및 JAR/Config 준비 ==="
+HDFS_CONFIG_PATH="/apps/hdfs-auto-tiering/config/hdfs-auto-tiering-config.yaml"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "로컬 설정 파일이 없어 HDFS에서 다운로드합니다..."
+    hdfs dfs -copyToLocal -f "$HDFS_CONFIG_PATH" "$CONFIG_FILE" 2>/dev/null || true
+fi
+
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "설정 파일 누락: HDFS($HDFS_CONFIG_PATH)와 로컬($CONFIG_FILE) 모두 존재하지 않습니다."
+    echo "INFRA.md 문서의 18-2장을 다시 수행하여 설정 파일을 생성해 주십시오."
     exit 1
 fi
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "설정 파일 누락: ${CONFIG_FILE} (18-2장을 수행하십시오)"
+
+echo "배포된 HDFS 경로에서 JAR 파일 가져오기..."
+HDFS_JAR_PATH="/apps/hdfs-auto-tiering/lib/hdfs-auto-tiering.jar"
+hdfs dfs -copyToLocal -f "$HDFS_JAR_PATH" "$JAR_FILE" 2>/dev/null || true
+
+if [ ! -f "$JAR_FILE" ]; then
+    echo "JAR 파일 가져오기 실패: HDFS 경로($HDFS_JAR_PATH)에 파일이 존재하지 않습니다."
+    echo "먼저 ~/deploy-auto-tiering.sh 스크립트를 통해 배포를 완료해야 합니다."
     exit 1
 fi
 
@@ -1613,6 +1733,9 @@ dd if=/dev/urandom of="$LOCAL_TMP" bs=1M count=10 2>/dev/null
 hdfs dfs -mkdir -p "$TEST_DIR"
 hdfs storagepolicies -setStoragePolicy -path "$TEST_DIR" -policy ALL_SSD > /dev/null
 hdfs dfs -put -f "$LOCAL_TMP" "$TEST_FILE"
+hdfs storagepolicies -setStoragePolicy -path "$TEST_FILE" -policy ALL_SSD > /dev/null
+hdfs storagepolicies -satisfyStoragePolicy -path "$TEST_FILE" > /dev/null 2>&1 || true
+sleep 5
 
 echo "=== 테스트 2: 블록 SSD 배치 확인 ==="
 FSCK_BEFORE=$(hdfs fsck "$TEST_FILE" -files -blocks -locations 2>/dev/null)
@@ -1622,28 +1745,33 @@ if ! echo "$FSCK_BEFORE" | grep -E -q "9867|9866"; then
 fi
 echo "확인 성공"
 
-echo "=== 테스트 3: DB 상태 전이 삽입 (HOT->COLD) ==="
-# 원래는 Scoring Engine이 자정에 자동으로 FSImage를 파싱하여 아래와 같이 INSERT 하지만,
-# 본 테스트에서는 실시간 E2E 동작을 검증하기 위해 강제로 PENDING 작업을 주입합니다.
-FILE_SIZE_BYTES=$((10 * 1048576))
-$PSQL_CMD -c "INSERT INTO pending_jobs (file_path, file_size_bytes, current_tier, target_tier, priority_score, status, scored_at) VALUES ('${TEST_FILE}', ${FILE_SIZE_BYTES}, 'HOT', 'COLD', 100.0, 'PENDING', NOW());"
+echo "=== 테스트 3: FSImage 동기화 및 ScoringEngine 후보 생성 준비 (HOT->COLD) ==="
+OLD_ATIME=$(date -d '120 days ago' +%Y%m%d:%H%M%S)
+hdfs dfs -touch -a -t "$OLD_ATIME" "$TEST_FILE"
+hdfs dfsadmin -safemode enter >/dev/null
+hdfs dfsadmin -saveNamespace >/dev/null
+hdfs dfsadmin -safemode leave >/dev/null
 
 echo "=== 테스트 4: Batch Scheduler 기동 ==="
-java -jar "$JAR_FILE" "$CONFIG_FILE" > /dev/null 2>&1 &
+# 원래는 로그를 버렸지만( /dev/null ), 디버깅을 위해 임시 파일로 남기도록 수정
+java -jar "$JAR_FILE" "$CONFIG_FILE" > /tmp/tiering-test.log 2>&1 &
 SCHEDULER_PID=$!
 
 DISPATCHED="no"
-for i in $(seq 1 15); do
+for i in $(seq 1 60); do
     sleep 2
     STATUS=$($PSQL_CMD -c "SELECT status FROM pending_jobs WHERE file_path = '${TEST_FILE}' ORDER BY job_id DESC LIMIT 1;" 2>/dev/null || echo "UNKNOWN")
-    if [ "$STATUS" = "DISPATCHED" ] || [ "$STATUS" = "COMPLETED" ]; then
+    if [ -z "$STATUS" ]; then STATUS="NOT_CREATED"; fi
+    if [ "$STATUS" = "DISPATCHED" ] || [ "$STATUS" = "IN_PROGRESS" ] || [ "$STATUS" = "COMPLETED" ]; then
         DISPATCHED="yes"
         break
     fi
+    echo "대기 중... 현재 상태: $STATUS"
 done
 
 if [ "$DISPATCHED" = "no" ]; then
-    echo "작업 처리 실패"
+    echo "작업 처리 실패! Java 데몬 에러 로그:"
+    cat /tmp/tiering-test.log
     exit 1
 fi
 echo "상태 전이 성공: $STATUS"
@@ -1752,7 +1880,19 @@ sleep 3
 HADOOP_CONF_DIR=~/hadoop-conf/namenode yarn --daemon start nodemanager
 ```
 
-### YARN Service Framework 오류 (`yarn app -launch` 실패)
+### YARN Service Application 실행 시 tar.gz 추출 실패 오류 (파일 없음/압축 오류)
+
+YARN 3.x의 기본 의존성 파일 자동 업로드 로직 버그로 인해 발생한다. (정상 압축 파일 대신 jar 파일 등을 잘못 생성하여 업로드함)
+1. **15-5. YARN Service 프레임워크 의존성 수동 업로드 (버그 우회)** 단계를 수행하여 정상적인 평탄화된 `service-dep.tar.gz`를 HDFS에 직접 올린다.
+2. `yarn-site.xml`에 `yarn.service.framework.path` 속성이 수동 업로드 경로로 명시되어 있는지 확인한다.
+
+```bash
+grep "yarn.service.framework.path" ~/hadoop-conf/namenode/yarn-site.xml
+```
+
+없다면 `INFRA.md`의 `yarn-site.xml` 설정 부분을 참고하여 추가하고, YARN 데몬(resourcemanager, nodemanager)을 모두 재시작한다.
+
+### YARN Service Framework API 활성화 오류 (`yarn app -launch` 실패)
 
 ResourceManager에 API 서비스가 활성화되었는지 확인한다.
 
@@ -1814,5 +1954,296 @@ HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs namenode -format
 
 ---
 
-*Hadoop 3.4.1 + WSL2 Ubuntu 22.04 기준*  
+## 21. 오토티어링 효용 검증 (비용 절감 리포트)
+
+오토티어링 시스템이 실제로 비즈니스에 얼마나 기여하고 있는지(스토리지 비용 절감 및 공간 최적화 비율)를 직관적으로 보여주는 리포팅 스크립트입니다. DB의 처리 이력을 바탕으로 **실제 AWS EBS 스토리지 단가표**를 적용하여 월간 절감액을 산출합니다.
+
+```bash
+cat > ~/test-auto-tiering-savings.sh << 'SCRIPT'
+#!/usr/bin/env bash
+set -u
+
+# AWS EBS 기반 실제 클라우드 스토리지 단가표 (월간 GB당 비용, us-east-1 기준)
+# HOT (gp3 - 범용 SSD): $0.08 / GB
+# WARM (st1 - 처리량 최적화 HDD): $0.045 / GB
+# COLD (sc1 - 콜드 HDD): $0.015 / GB
+
+export HADOOP_CONF_DIR="${HADOOP_CONF_DIR:-$HOME/hadoop-conf/namenode}"
+PSQL_CMD="psql -h localhost -U dsc -d dsc_tiering -qtA"
+SCENARIO=${1:-"CURRENT"}
+LOCAL_TMP_DIR="/tmp/tiering_scenario_data"
+HDFS_TEST_DIR="/test/scenario_e2e"
+
+# 스크립트 강제 종료(Ctrl+C) 시에도 반드시 쓰레기 데이터를 삭제하도록 trap 설정
+trap 'echo -e "\n🧹 [긴급 정리] 강제 종료 감지. 물리적 쓰레기 데이터를 정리합니다..."; rm -rf "$LOCAL_TMP_DIR" 2>/dev/null; hdfs dfs -rm -r -skipTrash "$HDFS_TEST_DIR" 2>/dev/null || true' INT TERM EXIT
+
+if [ "$SCENARIO" != "CURRENT" ]; then
+    echo "=========================================================="
+    echo "🛠 [실물 스케일 시나리오 ${SCENARIO}] 기가바이트(GB) 단위 물리 파일 생성 및 이관 테스트 시작"
+    mkdir -p "$LOCAL_TMP_DIR"
+    hdfs dfs -rm -r -skipTrash "$HDFS_TEST_DIR" 2>/dev/null || true
+    hdfs dfs -mkdir -p "$HDFS_TEST_DIR"
+    hdfs storagepolicies -setStoragePolicy -path "$HDFS_TEST_DIR" -policy ALL_SSD >/dev/null
+    $PSQL_CMD -c "DELETE FROM pending_jobs WHERE file_path LIKE '${HDFS_TEST_DIR}%';" > /dev/null 2>&1
+    WARM_ATIME=$(date -d '60 days ago' +%Y%m%d:%H%M%S)
+    COLD_ATIME=$(date -d '200 days ago' +%Y%m%d:%H%M%S)
+
+    if [ "$SCENARIO" == "A" ]; then
+        echo "- 로그 데이터 2GB 생성 (1GB는 100일 전 접근으로 위장하여 COLD 유도) ..."
+        dd if=/dev/zero of="${LOCAL_TMP_DIR}/log_hot.dat" bs=1M count=1024 2>/dev/null
+        dd if=/dev/zero of="${LOCAL_TMP_DIR}/log_cold.dat" bs=1M count=1024 2>/dev/null
+        hdfs dfs -put -f "${LOCAL_TMP_DIR}/log_hot.dat" "$HDFS_TEST_DIR/"
+        hdfs dfs -put -f "${LOCAL_TMP_DIR}/log_cold.dat" "$HDFS_TEST_DIR/"
+        hdfs storagepolicies -setStoragePolicy -path "${HDFS_TEST_DIR}/log_hot.dat" -policy ALL_SSD >/dev/null
+        hdfs storagepolicies -setStoragePolicy -path "${HDFS_TEST_DIR}/log_cold.dat" -policy ALL_SSD >/dev/null
+        hdfs storagepolicies -satisfyStoragePolicy -path "${HDFS_TEST_DIR}/log_hot.dat" >/dev/null 2>&1 || true
+        hdfs storagepolicies -satisfyStoragePolicy -path "${HDFS_TEST_DIR}/log_cold.dat" >/dev/null 2>&1 || true
+
+        # Access Time을 과거(예: 2023년)로 조작하여 ScoringEngine이 COLD로 판정하게 만듦
+        hdfs dfs -touch -a -t "$COLD_ATIME" "${HDFS_TEST_DIR}/log_cold.dat"
+
+    elif [ "$SCENARIO" == "B" ]; then
+        echo "- 머신러닝 데이터 3GB 생성 (WARM 1GB, COLD 1GB 위장) ..."
+        dd if=/dev/zero of="${LOCAL_TMP_DIR}/ml_hot.dat" bs=1M count=1024 2>/dev/null
+        dd if=/dev/zero of="${LOCAL_TMP_DIR}/ml_warm.dat" bs=1M count=1024 2>/dev/null
+        dd if=/dev/zero of="${LOCAL_TMP_DIR}/ml_cold.dat" bs=1M count=1024 2>/dev/null
+        hdfs dfs -put -f "${LOCAL_TMP_DIR}/ml_hot.dat" "$HDFS_TEST_DIR/"
+        hdfs dfs -put -f "${LOCAL_TMP_DIR}/ml_warm.dat" "$HDFS_TEST_DIR/"
+        hdfs dfs -put -f "${LOCAL_TMP_DIR}/ml_cold.dat" "$HDFS_TEST_DIR/"
+        hdfs storagepolicies -setStoragePolicy -path "${HDFS_TEST_DIR}/ml_hot.dat" -policy ALL_SSD >/dev/null
+        hdfs storagepolicies -setStoragePolicy -path "${HDFS_TEST_DIR}/ml_warm.dat" -policy ALL_SSD >/dev/null
+        hdfs storagepolicies -setStoragePolicy -path "${HDFS_TEST_DIR}/ml_cold.dat" -policy ALL_SSD >/dev/null
+        hdfs storagepolicies -satisfyStoragePolicy -path "${HDFS_TEST_DIR}/ml_hot.dat" >/dev/null 2>&1 || true
+        hdfs storagepolicies -satisfyStoragePolicy -path "${HDFS_TEST_DIR}/ml_warm.dat" >/dev/null 2>&1 || true
+        hdfs storagepolicies -satisfyStoragePolicy -path "${HDFS_TEST_DIR}/ml_cold.dat" >/dev/null 2>&1 || true
+
+        # WARM 조건(30~90일), COLD 조건(90일 이상)에 맞게 시간 조작
+        # 테스트 편의상 WARM은 60일 전, COLD는 200일 전으로 강제 지정하기 위해 구체적인 과거 시간 사용
+        hdfs dfs -touch -a -t "$WARM_ATIME" "${HDFS_TEST_DIR}/ml_warm.dat"
+        hdfs dfs -touch -a -t "$COLD_ATIME" "${HDFS_TEST_DIR}/ml_cold.dat"
+
+    elif [ "$SCENARIO" == "C" ]; then
+        echo "- 컴플라이언스 아카이빙 5GB 생성 (전부 COLD 위장) ..."
+        for i in {1..5}; do
+            dd if=/dev/zero of="${LOCAL_TMP_DIR}/comp_${i}.dat" bs=1M count=1024 2>/dev/null
+            hdfs dfs -put -f "${LOCAL_TMP_DIR}/comp_${i}.dat" "$HDFS_TEST_DIR/"
+            hdfs storagepolicies -setStoragePolicy -path "${HDFS_TEST_DIR}/comp_${i}.dat" -policy ALL_SSD >/dev/null
+            hdfs storagepolicies -satisfyStoragePolicy -path "${HDFS_TEST_DIR}/comp_${i}.dat" >/dev/null 2>&1 || true
+            hdfs dfs -touch -a -t "$COLD_ATIME" "${HDFS_TEST_DIR}/comp_${i}.dat"
+        done
+    else
+        echo "올바르지 않은 시나리오입니다. (A, B, C 중 택 1)"
+        exit 1
+    fi
+
+    echo "- NameNode FSImage를 강제 동기화하여 ScoringEngine이 실제 메타데이터를 읽도록 합니다..."
+    hdfs dfsadmin -safemode enter >/dev/null
+    hdfs dfsadmin -saveNamespace >/dev/null
+    hdfs dfsadmin -safemode leave >/dev/null
+
+    echo "- 데몬 강제 재기동하여 이관 트리거 (처음부터 끝까지 파이프라인 수행)..."
+    # 기존에 돌고 있던 Java 데몬 프로세스 종료 (YARN이 아닌 로컬 데몬 기준)
+    kill $(pgrep -f hdfs-auto-tiering.jar) 2>/dev/null || true
+    sleep 2
+
+    JAR_FILE="/tmp/hdfs-auto-tiering-scenario.jar"
+    CONFIG_FILE="$HOME/hdfs-auto-tiering-config-test.yaml"
+    hdfs dfs -copyToLocal -f "/apps/hdfs-auto-tiering/lib/hdfs-auto-tiering.jar" "$JAR_FILE" 2>/dev/null
+    if [ ! -f "$JAR_FILE" ]; then
+        echo "JAR 파일 가져오기 실패: /apps/hdfs-auto-tiering/lib/hdfs-auto-tiering.jar 를 먼저 배포해야 합니다."
+        exit 1
+    fi
+
+    cat > "$CONFIG_FILE" << 'CFG'
+database:
+  url: jdbc:postgresql://localhost:5432/dsc_tiering
+  username: dsc
+  password: dsc
+  pool:
+    maximumPoolSize: 8
+    minimumIdle: 2
+hdfs:
+  fsDefaultName: hdfs://localhost:9000
+  user: ""
+  policyMapping:
+    HOT: ALL_SSD
+    WARM: ONE_SSD
+    COLD: COLD
+scoring:
+  enabled: true
+  intervalSeconds: 86400
+  weightAccessTime: 0.5
+  weightFileSize: 0.5
+  localFsimageDir: /tmp/hdfs-auto-tiering-fsimage
+scheduler:
+  pollIntervalSeconds: 10
+  windows:
+    - name: allday
+      start: "00:00"
+      end:   "23:59"
+      batchSize: 50
+      interBatchWaitMs: 1000
+  concurrency: 8
+  maxRetries: 3
+tracker:
+  pollIntervalSeconds: 5
+  timeoutMinutes: 60
+  batchSize: 20
+  completionRatio: 0.95
+  maxWorkers: 5
+  nodenameSemaphore: 3
+CFG
+
+    > /tmp/tiering-scenario.log
+    java -jar "$JAR_FILE" "$CONFIG_FILE" > /tmp/tiering-scenario.log 2>&1 &
+    DAEMON_PID=$!
+
+    TARGET_COMPLETED=0
+    if [ "$SCENARIO" == "A" ]; then TARGET_COMPLETED=1; fi
+    if [ "$SCENARIO" == "B" ]; then TARGET_COMPLETED=2; fi
+    if [ "$SCENARIO" == "C" ]; then TARGET_COMPLETED=5; fi
+    QUEUE_SCOPE_SQL=" AND file_path LIKE '${HDFS_TEST_DIR}%'"
+
+    for i in $(seq 1 120); do
+        PENDING_COUNT=$($PSQL_CMD -c "SELECT COUNT(*) FROM pending_jobs WHERE status='PENDING'${QUEUE_SCOPE_SQL};" 2>/dev/null)
+        DISPATCHED_COUNT=$($PSQL_CMD -c "SELECT COUNT(*) FROM pending_jobs WHERE status='DISPATCHED'${QUEUE_SCOPE_SQL};" 2>/dev/null)
+        IN_PROGRESS_COUNT=$($PSQL_CMD -c "SELECT COUNT(*) FROM pending_jobs WHERE status='IN_PROGRESS'${QUEUE_SCOPE_SQL};" 2>/dev/null)
+        COMPLETED_COUNT=$($PSQL_CMD -c "SELECT COUNT(*) FROM pending_jobs WHERE status='COMPLETED'${QUEUE_SCOPE_SQL};" 2>/dev/null)
+        FAILED_COUNT=$($PSQL_CMD -c "SELECT COUNT(*) FROM pending_jobs WHERE status='FAILED'${QUEUE_SCOPE_SQL};" 2>/dev/null)
+
+        # 현재 이동 중인 파일(DISPATCHED) 목록 조회
+        DISPATCHED_FILES=$($PSQL_CMD -c "SELECT file_path, current_tier, target_tier FROM pending_jobs WHERE status IN ('DISPATCHED', 'IN_PROGRESS')${QUEUE_SCOPE_SQL} LIMIT 2;" 2>/dev/null)
+
+        # 화면 전체를 지우고(clear) 새로 그려 터미널 깨짐 방지
+        clear
+        echo "=========================================================="
+        echo "🚀 [Live] Auto-Tiering 파이프라인 실시간 시각화 대시보드"
+        echo "=========================================================="
+        printf "📊 전체 큐 상태 (대기 한도: %ds)\n" "$((i*2))"
+        printf " ⏳ 대기 중 (PENDING)    : %d\n" "$PENDING_COUNT"
+        printf " 🏃 이관 중 (DISPATCHED) : %d\n" "$DISPATCHED_COUNT"
+        printf " 🔎 확인 중 (IN_PROGRESS): %d\n" "$IN_PROGRESS_COUNT"
+        printf " ✅ 완료됨  (COMPLETED)  : %d / %d\n" "$COMPLETED_COUNT" "$TARGET_COMPLETED"
+        printf " ❌ 실패함  (FAILED)     : %d\n" "$FAILED_COUNT"
+        echo "----------------------------------------------------------"
+        # 백그라운드 프로세스가 죽었는지 확인
+        if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
+            echo "❌ 치명적 오류: 백그라운드 Java 데몬이 비정상 종료되었습니다!"
+            echo "--- [/tmp/tiering-scenario.log 출력] ---"
+            cat /tmp/tiering-scenario.log
+            echo "----------------------------------------"
+            break
+        fi
+
+        if [ -n "$DISPATCHED_FILES" ]; then
+            echo "🔥 현재 물리 이동 중인 파일 (HDFS 실시간):"
+            echo "$DISPATCHED_FILES" | sed 's/|/ ===> /g' | sed 's/^/   - /'
+        elif [ "$COMPLETED_COUNT" -lt "$TARGET_COMPLETED" ]; then
+            echo "📡 Scheduler/Tracker 상태 전이 대기 중..."
+        else
+            echo "✨ 모든 이관 파이프라인이 성공적으로 완료되었습니다!"
+        fi
+
+        if [ "$COMPLETED_COUNT" -eq "$TARGET_COMPLETED" ]; then
+            SUCCESS_FLAG=1
+            break
+        fi
+        sleep 2
+    done
+
+    kill "$DAEMON_PID" 2>/dev/null || true
+    rm -f "$JAR_FILE" 2>/dev/null || true
+    rm -rf "$LOCAL_TMP_DIR"
+
+    if [ "${SUCCESS_FLAG:-0}" -eq 1 ]; then
+        echo "- 파이프라인 전체 구동 및 이관 처리 완료!"
+    else
+        echo "- ⚠️ 이관 처리가 완료되지 않고 스크립트가 종료되었습니다. (타임아웃 또는 데몬 에러)"
+        echo "로그 파일 확인 요망: cat /tmp/tiering-scenario.log"
+        cat /tmp/tiering-scenario.log | grep -E 'Exception|Error|Fail' || true
+    fi
+fi
+
+echo "=========================================================="
+echo "📊 HDFS Auto-Tiering 비용 절감 및 스토리지 최적화 리포트"
+echo "=========================================================="
+
+# 1. 누적 처리량 (HOT -> COLD) 및 (HOT -> WARM) 바이트
+REPORT_SCOPE_SQL=""
+if [ "$SCENARIO" != "CURRENT" ]; then
+    REPORT_SCOPE_SQL=" AND file_path LIKE '${HDFS_TEST_DIR}%'"
+fi
+HOT_TO_COLD_BYTES=$($PSQL_CMD -c "SELECT COALESCE(SUM(file_size_bytes), 0) FROM pending_jobs WHERE status='COMPLETED' AND current_tier='HOT' AND target_tier='COLD'${REPORT_SCOPE_SQL};" 2>/dev/null || echo 0)
+HOT_TO_WARM_BYTES=$($PSQL_CMD -c "SELECT COALESCE(SUM(file_size_bytes), 0) FROM pending_jobs WHERE status='COMPLETED' AND current_tier='HOT' AND target_tier='WARM'${REPORT_SCOPE_SQL};" 2>/dev/null || echo 0)
+
+# 바이트를 GB(기가바이트) 단위로 변환 (소수점 유지)
+HOT_TO_COLD_GB=$(awk "BEGIN {print $HOT_TO_COLD_BYTES / 1024 / 1024 / 1024}")
+HOT_TO_WARM_GB=$(awk "BEGIN {print $HOT_TO_WARM_BYTES / 1024 / 1024 / 1024}")
+
+echo "[✅ 데이터 이관 실적 (누적 GB)]"
+printf -- "- HOT(gp3) -> COLD(sc1) 이관량: %.2f GB\n" "$HOT_TO_COLD_GB"
+printf -- "- HOT(gp3) -> WARM(st1) 이관량: %.2f GB\n" "$HOT_TO_WARM_GB"
+
+# 비용 절감액 계산 (월간 GB당 절감액: COLD 이관 시 $0.065, WARM 이관 시 $0.035 절감)
+SAVINGS_COLD=$(awk "BEGIN {printf \"%.2f\", $HOT_TO_COLD_GB * 0.065}")
+SAVINGS_WARM=$(awk "BEGIN {printf \"%.2f\", $HOT_TO_WARM_GB * 0.035}")
+TOTAL_SAVINGS=$(awk "BEGIN {printf \"%.2f\", $SAVINGS_COLD + $SAVINGS_WARM}")
+
+echo ""
+echo "[💰 월간 클라우드 스토리지 비용 절감액 (AWS EBS 기준)]"
+echo "- 비싼 SSD 대신 ARCHIVE(sc1)를 활용한 절감액: \$${SAVINGS_COLD} / 월"
+echo "- 비싼 SSD 대신 DISK(st1)를 활용한 절감액: \$${SAVINGS_WARM} / 월"
+echo "----------------------------------------------------------"
+echo "▶ 총 절감액: \$${TOTAL_SAVINGS} / 월"
+echo "=========================================================="
+
+if [ "$SCENARIO" != "CURRENT" ]; then
+    echo "🧹 물리적 시나리오 테스트 데이터 정리 완료."
+    $PSQL_CMD -c "DELETE FROM pending_jobs WHERE file_path LIKE '${HDFS_TEST_DIR}%';" > /dev/null 2>&1
+    hdfs dfs -rm -r -skipTrash "$HDFS_TEST_DIR" 2>/dev/null || true
+fi
+SCRIPT
+
+chmod +x ~/test-auto-tiering-savings.sh
+```
+
+- **실행 방법**:
+  - 현재 DB 누적치 확인: `~/test-auto-tiering-savings.sh`
+  - 시나리오별 실물 테스트: `~/test-auto-tiering-savings.sh A` (또는 B, C)
+- **활용**: E2E 테스트 직후에는 이관량이 10MB에 불과하므로, 스크립트 뒤에 `A`, `B`, `C` 인자를 붙여 실제 더미 파일을 HDFS에 생성하고 ScoringEngine이 발견한 작업만으로 절감 효과를 시연합니다. (테스트가 끝나면 생성된 HDFS 데이터와 해당 경로의 DB 이력은 자동으로 정리됩니다.)
+
+### 21.1. 실제 운영 환경 적용 시나리오 (실물 GB 스케일 테스트)
+
+테스트 서버(WSL2)의 물리적 한계를 고려하여, 수 기가바이트(GB) 단위의 **실제 더미 파일을 HDFS에 생성하고 YARN 기반 데몬이 이를 직접 이관 처리(Physical Data Movement)하도록 시뮬레이션**합니다. 테스트 후 산출되는 절감액 역시 실제 GB 이관량에 맞춰 계산됩니다.
+
+#### 시나리오 A: 로그성 데이터 누적 (Log Data Accumulation)
+- **상황**: 매일 지속적으로 로그 데이터가 쌓이며, 오래된 로그는 콜드로 이관됩니다.
+- **테스트 환경**: 총 2GB의 물리 파일(1GB 단위 2개) 생성. 1GB는 HOT, 1GB는 COLD로 이관.
+- **Auto-Tiering 미도입**: 2GB 모두 `gp3(HOT)` 유지 시 $\rightarrow$ 월 $0.16 발생.
+- **Auto-Tiering 도입**:
+  - HOT 비용: 1GB * $0.08/GB = $0.080
+  - COLD 비용: 1GB * $0.015/GB = $0.015
+  - **결과**: 월 $0.095 비용 발생 (절감액: $0.065)
+
+#### 시나리오 B: 머신러닝 데이터 레이크 (ML Data Lake)
+- **상황**: 학습 데이터(HOT), 검증 데이터(WARM), 과거 데이터(COLD)가 혼재되어 있습니다.
+- **테스트 환경**: 총 3GB의 물리 파일(1GB 단위 3개) 생성. HOT 1GB, WARM 1GB, COLD 1GB로 분산.
+- **Auto-Tiering 미도입**: 3GB 모두 `gp3(HOT)` 유지 시 $\rightarrow$ 월 $0.24 발생.
+- **Auto-Tiering 도입**:
+  - HOT 비용: 1GB * $0.08/GB = $0.080
+  - WARM 비용: 1GB * $0.045/GB = $0.045
+  - COLD 비용: 1GB * $0.015/GB = $0.015
+  - **결과**: 월 $0.14 비용 발생 (절감액: $0.10)
+
+#### 시나리오 C: 금융/의료 컴플라이언스 아카이빙 (Long-term Compliance)
+- **상황**: 컴플라이언스로 인해 대부분의 과거 데이터를 무조건 보관해야 합니다.
+- **테스트 환경**: 총 5GB의 물리 파일(1GB 단위 5개) 생성. 전량 COLD로 압축 이관.
+- **Auto-Tiering 미도입**: 5GB 모두 `gp3(HOT)` 유지 시 $\rightarrow$ 월 $0.40 발생.
+- **Auto-Tiering 도입**:
+  - COLD 비용: 5GB * $0.015/GB = $0.075
+  - **결과**: 월 $0.075 비용 발생 (절감액: $0.325)
+
+---
+
+*Hadoop 3.4.1 + WSL2 Ubuntu 22.04 기준*
 *분산시스템및컴퓨팅(2026-1) HDFS Auto-Tiering YARN 서비스 프로젝트*

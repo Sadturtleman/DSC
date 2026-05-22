@@ -38,13 +38,16 @@ import java.util.List;
 public class HdfsPolicyChecker implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(HdfsPolicyChecker.class);
-    private static final double COMPLETION_RATIO = 0.95;
-
     private final DistributedFileSystem dfs;
+    private final double completionRatio;
 
     // ── 생성자 ──────────────────────────────────────────────────────────
 
     public HdfsPolicyChecker(String fsDefaultName, String confDir) throws IOException {
+        this(fsDefaultName, confDir, 0.95);
+    }
+
+    public HdfsPolicyChecker(String fsDefaultName, String confDir, double completionRatio) throws IOException {
         Configuration conf = new Configuration();
         if (confDir != null && !confDir.isBlank()) {
             conf.addResource(new Path(confDir + "/core-site.xml"));
@@ -56,12 +59,18 @@ public class HdfsPolicyChecker implements AutoCloseable {
             throw new IllegalStateException("fs.defaultFS 가 HDFS 가 아님: " + fsDefaultName);
         }
         this.dfs = (DistributedFileSystem) fs;
+        this.completionRatio = validateCompletionRatio(completionRatio);
         log.info("HdfsPolicyChecker 초기화. NN={}", fsDefaultName);
     }
 
     /** Already-created DFS injection for tests and embedded use. */
     public HdfsPolicyChecker(DistributedFileSystem dfs) {
+        this(dfs, 0.95);
+    }
+
+    public HdfsPolicyChecker(DistributedFileSystem dfs, double completionRatio) {
         this.dfs = dfs;
+        this.completionRatio = validateCompletionRatio(completionRatio);
     }
 
     // ── 공개 API ────────────────────────────────────────────────────────
@@ -121,11 +130,18 @@ public class HdfsPolicyChecker implements AutoCloseable {
 
         double ratio = (double) hits / total;
         log.debug("완료율 tier={} {}/{} = {}", tier, hits, total, ratio);
-        return ratio >= COMPLETION_RATIO;
+        return ratio >= completionRatio;
     }
 
     private boolean matches(String actual, String[] expected) {
         return Arrays.stream(expected).anyMatch(e -> e.equalsIgnoreCase(actual));
+    }
+
+    private static double validateCompletionRatio(double completionRatio) {
+        if (completionRatio <= 0.0 || completionRatio > 1.0) {
+            throw new IllegalArgumentException("completionRatio must be in (0.0, 1.0]: " + completionRatio);
+        }
+        return completionRatio;
     }
 
     @Override

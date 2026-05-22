@@ -14,6 +14,13 @@ hdfs:
     WARM: ONE_SSD
     COLD: COLD
 
+scoring:
+  enabled: true
+  interval-seconds: 86400
+  weight-access-time: 0.5
+  weight-file-size: 0.5
+  local-fsimage-dir: /tmp/hdfs-auto-tiering-fsimage
+
 scheduler:
   poll-interval-seconds: 10
   # 시간대별 가변 정책 (제안서 §3.3)

@@ -1,6 +1,6 @@
 # HDFS Auto-Tiering Service (DSC)
 
-HDFS의 NameNode 메타데이터(FSImage)를 분석하여 파일의 접근 빈도 및 크기에 따라 데이터를 HOT(SSD), WARM(DISK), COLD(ARCHIVE) 스토리지로 자동 재배치(Tiering)하는 클라우드 네이티브 데몬입니다.
+HDFS의 NameNode 메타데이터(FSImage)를 분석하여 파일의 접근 빈도 및 크기에 따라 데이터를 HOT(ALL_SSD), WARM(ONE_SSD), COLD(COLD/ARCHIVE) 스토리지 정책으로 자동 재배치(Tiering)하는 클라우드 네이티브 데몬입니다.
 
 ---
 
@@ -34,8 +34,10 @@ YARN Service Framework를 통해 단일 JVM 컨테이너로 기동되며, 하나
 flowchart LR
     A[FSImage Parsed] -->|Scoring Worker| B[PENDING]
     B -->|Scheduler Worker| C[DISPATCHED]
-    C -->|Tracker Worker: Success| D[COMPLETED]
+    C -->|Tracker Worker: claim| I[IN_PROGRESS]
+    I -->|Tracker Worker: Success| D[COMPLETED]
     C -->|Tracker Worker: Timeout| E[FAILED]
+    I -->|Tracker Worker: Timeout| E
 ```
 
 - 각 Worker는 본인에게 할당된 역할(INSERT, DISPATCH, COMPLETE)만 수행하므로 **데드락(Deadlock)이나 Race Condition이 발생하지 않는 견고한 동시성 모델**을 보장합니다.
@@ -62,7 +64,7 @@ edu.dsc.tiering
 ├── scheduler/
 │   └── BatchScheduler.java   # PENDING -> DISPATCHED 스레드
 └── tracking/
-    └── CompletionTracker.java# DISPATCHED -> COMPLETED 검증 스레드
+    └── CompletionTracker.java# DISPATCHED/IN_PROGRESS -> COMPLETED/FAILED 검증 스레드
 ```
 
 ---
@@ -72,17 +74,20 @@ edu.dsc.tiering
 모든 동작 주기, 가중치, 타임아웃 등은 통합된 하나의 `yaml` 파일을 통해 제어됩니다.
 
 ```yaml
-workers:
-  scoring:
-    cron: "0 0 0 * * ?"
-    weight-access-time: 0.7
-    weight-file-size: 0.3
-  scheduler:
-    poll-interval-seconds: 10
-    concurrency: 8
-  tracker:
-    poll-interval-seconds: 30
-    timeout-hours: 12
+scoring:
+  enabled: true
+  interval-seconds: 86400
+  weight-access-time: 0.5
+  weight-file-size: 0.5
+  local-fsimage-dir: /tmp/hdfs-auto-tiering-fsimage
+
+scheduler:
+  poll-interval-seconds: 10
+  concurrency: 8
+
+tracker:
+  poll-interval-seconds: 45
+  timeout-minutes: 60
 ```
 
 ---

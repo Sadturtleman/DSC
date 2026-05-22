@@ -114,6 +114,17 @@ class HdfsPolicyCheckerTest {
         assertFalse(checker.isSatisfied("/cold/file.log", Tier.COLD));
     }
 
+    @Test
+    @DisplayName("COLD: completionRatio 설정값을 사용")
+    void cold_customCompletionRatio() throws Exception {
+        checker = new HdfsPolicyChecker(mockDfs, 0.90);
+        List<StorageType[]> types = new ArrayList<>();
+        for (int i = 0; i < 47; i++) types.add(new StorageType[]{StorageType.ARCHIVE});
+        for (int i = 0; i < 3;  i++) types.add(new StorageType[]{StorageType.DISK});
+        givenMultipleBlocks("/cold/file.log", types);
+        assertTrue(checker.isSatisfied("/cold/file.log", Tier.COLD));
+    }
+
     // ── HOT 정책 ──────────────────────────────────────────────────────────
 
     @Test

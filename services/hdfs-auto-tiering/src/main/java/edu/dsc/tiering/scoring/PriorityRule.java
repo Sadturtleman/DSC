@@ -9,9 +9,9 @@ import java.time.Instant;
  * 파일 메타데이터로부터 티어 이동 우선순위 점수를 계산하고,
  * 현재 티어 → 목표 티어를 결정한다.
  *
- * <h2>우선순위 공식</h2>
+ * <h2>단일 파일 보조 점수</h2>
  * <pre>
- *   priority_score = w_access × (1 − accessRecency) + w_size × sizeScore
+ *   priority_score = w_access × accessRecency + w_size × sizeScore
  *
  *   accessRecency = clamp(daysSinceAccess / ACCESS_HORIZON_DAYS, 0, 1)
  *                   → 0이면 최근 접근 (HOT 유지), 1이면 오래된 파일
@@ -19,7 +19,7 @@ import java.time.Instant;
  *                   → 클수록 이동 비용 대비 효율이 높아 우선 처리
  * </pre>
  *
- * <p>점수가 높을수록 "빨리 COLD로 내려야 할" 파일이다.
+ * <p>실제 DB 우선순위는 {@link #rankScore(int, int)} 를 사용하며, 낮을수록 먼저 처리된다.
  *
  * <h2>티어 결정 규칙</h2>
  * <ul>
@@ -90,7 +90,7 @@ public class PriorityRule {
     }
 
     /**
-     * 우선순위 점수를 계산한다. 높을수록 먼저 처리된다.
+     * 단일 파일 기준의 보조 점수를 계산한다.
      *
      * @param meta FSImage에서 추출한 파일 메타데이터
      * @return [0.0, 1.0] 범위의 점수
@@ -100,17 +100,14 @@ public class PriorityRule {
         double accessRecency = clamp(daysSince / ACCESS_HORIZON_DAYS);
         double sizeScore     = clamp((double) meta.fileSizeBytes() / SIZE_REFERENCE_BYTES);
 
-        // accessRecency가 클수록(=오래된 파일) 점수가 높아야 하므로 (1 - accessRecency) 반전
-        // → 오래되고 큰 파일이 가장 높은 점수
-        return weightAccessTime * (1.0 - accessRecency) + weightFileSize * sizeScore;
+        return weightAccessTime * accessRecency + weightFileSize * sizeScore;
+    }
 
-        // 주의: 위 식은 "HOT→COLD 이동 우선순위"를 나타낸다.
-        // accessRecency = 0 (최신 파일) → weightAccessTime × 1.0 (점수 ↑ = 빨리 HOT에 올려야)
-        // accessRecency = 1 (구 파일)   → weightAccessTime × 0.0 (접근시간 기여 없음)
-        //
-        // 실제 COLD 이동 우선순위 의미: 오래되고 클수록 COLD로 먼저 보내는 것이므로,
-        // 접근 기여를 (accessRecency)로 바꾸면 의미가 명확해진다.
-        // 팀 논의 후 weight 방향 조정 가능 (미해결 항목 §5).
+    /**
+     * 접근시간 순위와 용량 순위를 합산한다. 낮을수록 먼저 처리된다.
+     */
+    public double rankScore(int accessRank, int sizeRank) {
+        return weightAccessTime * accessRank + weightFileSize * sizeRank;
     }
 
     // ── 내부 유틸 ──────────────────────────────────────────────────────

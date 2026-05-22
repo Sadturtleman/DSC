@@ -34,7 +34,38 @@ public class PendingJobRepository {
                 + " WHERE job_id IN ("
                 + "     SELECT job_id FROM pending_jobs"
                 + "      WHERE status = 'PENDING'"
-                + "      ORDER BY priority_score DESC, scored_at ASC"
+                + "      ORDER BY priority_score ASC, scored_at ASC"
+                + "      LIMIT ?"
+                + "      FOR UPDATE SKIP LOCKED"
+                + " )"
+                + " RETURNING job_id, file_path, file_size_bytes,"
+                + "           current_tier, target_tier, priority_score, status,"
+                + "           scored_at, dispatched_at, completed_at,"
+                + "           retry_count, last_error, fsimage_snapshot_id";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setInt(1, batchSize);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<PendingJob> out = new ArrayList<>();
+                while (rs.next()) out.add(mapRow(rs));
+                return out;
+            }
+        }
+    }
+
+    /**
+     * Completion tracker 가 확인할 DISPATCHED/IN_PROGRESS job 을 점유한다.
+     * DISPATCHED 는 추적 시작을 나타내도록 IN_PROGRESS 로 전이하고,
+     * 이미 IN_PROGRESS 인 job 은 다음 확인 사이클에서 다시 반환한다.
+     */
+    public List<PendingJob> claimTrackableBatch(int batchSize) throws SQLException {
+        final String sql =
+                "UPDATE pending_jobs"
+                + "   SET status = 'IN_PROGRESS'::job_status"
+                + " WHERE job_id IN ("
+                + "     SELECT job_id FROM pending_jobs"
+                + "      WHERE status IN ('DISPATCHED', 'IN_PROGRESS')"
+                + "      ORDER BY dispatched_at ASC NULLS LAST, priority_score ASC, scored_at ASC"
                 + "      LIMIT ?"
                 + "      FOR UPDATE SKIP LOCKED"
                 + " )"
@@ -65,7 +96,8 @@ public class PendingJobRepository {
                 + "       retry_count = retry_count + 1,"
                 + "       dispatched_at = NULL,"
                 + "       last_error = ?"
-                + " WHERE job_id = ?";
+                + " WHERE job_id = ?"
+                + "   AND status IN ('DISPATCHED', 'IN_PROGRESS')";
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setInt(1, maxRetries);
@@ -107,7 +139,7 @@ public class PendingJobRepository {
         final String sql =
                 "INSERT INTO pending_jobs (file_path, file_size_bytes, current_tier, target_tier, priority_score, status, scored_at) " +
                 "VALUES (?, ?, ?::tier, ?::tier, ?, 'PENDING'::job_status, NOW()) " +
-                "ON CONFLICT (file_path) DO NOTHING";
+                "ON CONFLICT (file_path) WHERE status IN ('PENDING', 'DISPATCHED', 'IN_PROGRESS') DO NOTHING";
         int insertedCount = 0;
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
@@ -128,7 +160,12 @@ public class PendingJobRepository {
     }
 
     public void markCompleted(long jobId) {
-        final String sql = "UPDATE pending_jobs SET status = 'COMPLETED'::job_status, completed_at = NOW() WHERE job_id = ?";
+        final String sql =
+                "UPDATE pending_jobs"
+                + "   SET status = 'COMPLETED'::job_status,"
+                + "       completed_at = NOW()"
+                + " WHERE job_id = ?"
+                + "   AND status IN ('DISPATCHED', 'IN_PROGRESS')";
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setLong(1, jobId);
@@ -137,7 +174,11 @@ public class PendingJobRepository {
     }
 
     public void markFailed(long jobId) {
-        final String sql = "UPDATE pending_jobs SET status = 'FAILED'::job_status WHERE job_id = ?";
+        final String sql =
+                "UPDATE pending_jobs"
+                + "   SET status = 'FAILED'::job_status"
+                + " WHERE job_id = ?"
+                + "   AND status IN ('DISPATCHED', 'IN_PROGRESS')";
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setLong(1, jobId);
@@ -146,11 +187,7 @@ public class PendingJobRepository {
     }
 
     public void touchCheckedAt(long jobId) {
-        final String sql = "UPDATE pending_jobs SET dispatched_at = NOW() WHERE job_id = ?";
-        try (Connection c = dataSource.getConnection();
-             PreparedStatement ps = c.prepareStatement(sql)) {
-            ps.setLong(1, jobId);
-            ps.executeUpdate();
-        } catch (SQLException e) { throw new RuntimeException(e); }
+        // There is no checked_at column in the shared schema. Keep dispatched_at
+        // unchanged so timeout accounting remains based on the original dispatch.
     }
 }

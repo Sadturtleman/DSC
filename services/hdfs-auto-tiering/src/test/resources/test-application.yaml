@@ -14,6 +14,13 @@ hdfs:
     WARM: ONE_SSD
     COLD: COLD
 
+scoring:
+  enabled: false
+  interval-seconds: 86400
+  weight-access-time: 0.5
+  weight-file-size: 0.5
+  local-fsimage-dir: /tmp/hdfs-auto-tiering-fsimage-test
+
 scheduler:
   poll-interval-seconds: 5
   windows:

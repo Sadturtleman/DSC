@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 
@@ -29,7 +30,8 @@ import java.util.Map;
  *   0  = WARM (미지정 시 보수적으로 WARM 취급)
  *   2  = COLD
  *   5  = WARM
- *   7  = HOT
+ *   7  = WARM (HDFS default Hot = DISK)
+ *   10 = WARM
  *   12 = HOT
  * </pre>
  *
@@ -51,10 +53,10 @@ public class ScoringEngine implements Runnable {
     private static final Map<Integer, Tier> POLICY_TO_TIER = Map.of(
             0,  Tier.WARM,   // unspecified → 보수적으로 WARM 취급
             2,  Tier.COLD,   // Cold
-            5,  Tier.WARM,   // One_SSD (Warm)
-            7,  Tier.HOT,    // All_SSD (Hot)
-            10, Tier.HOT,    // All_NVMe → HOT 취급
-            12, Tier.HOT     // All_SSD alias
+            5,  Tier.WARM,   // Warm
+            7,  Tier.WARM,   // HDFS Hot(default DISK) -> service WARM
+            10, Tier.WARM,   // One_SSD
+            12, Tier.HOT     // All_SSD
     );
 
     private final FsImageFetcher       fetcher;
@@ -119,7 +121,7 @@ public class ScoringEngine implements Runnable {
         List<FileMetadata> allFiles = fetcher.fetchAndParse();
         log.info("FSImage 파싱 완료. 전체 파일 수={}", allFiles.size());
 
-        // 2. 스코어링: 이동 대상 필터링 + 우선순위 계산
+        // 2. 스코어링: 이동 대상 필터링 + 순위 기반 우선순위 계산
         List<ScoredJob> jobs = score(allFiles);
         log.info("이동 대상 파일 수={} / 전체={}", jobs.size(), allFiles.size());
 
@@ -133,15 +135,26 @@ public class ScoringEngine implements Runnable {
 
     // ── 스코어링 ──────────────────────────────────────────────────────────
 
-    private List<ScoredJob> score(List<FileMetadata> files) {
-        List<ScoredJob> result = new ArrayList<>();
+    List<ScoredJob> score(List<FileMetadata> files) {
+        List<Candidate> candidates = new ArrayList<>();
         for (FileMetadata meta : files) {
             Tier currentTier = resolveTier(meta.storagePolicy());
             Tier targetTier  = rule.targetTier(meta, currentTier);
             if (targetTier == null) continue; // 이동 불필요
 
-            double priority = rule.score(meta);
-            result.add(new ScoredJob(meta, currentTier, targetTier, priority));
+            candidates.add(new Candidate(meta, currentTier, targetTier));
+        }
+
+        rankByAccessTime(candidates);
+        rankByFileSize(candidates);
+
+        List<ScoredJob> result = new ArrayList<>();
+        for (Candidate candidate : candidates) {
+            result.add(new ScoredJob(
+                    candidate.meta,
+                    candidate.currentTier,
+                    candidate.targetTier,
+                    rule.rankScore(candidate.accessRank, candidate.sizeRank)));
         }
         return result;
     }
@@ -152,6 +165,36 @@ public class ScoringEngine implements Runnable {
      */
     private static Tier resolveTier(int policyCode) {
         return POLICY_TO_TIER.getOrDefault(policyCode, Tier.WARM);
+    }
+
+    private static void rankByAccessTime(List<Candidate> candidates) {
+        candidates.sort(Comparator
+                .comparingLong((Candidate c) -> accessRankKey(c.meta.accessTimeMs()))
+                .thenComparing(c -> c.meta.path()));
+        assignAccessRanks(candidates);
+    }
+
+    private static void rankByFileSize(List<Candidate> candidates) {
+        candidates.sort(Comparator
+                .comparingLong((Candidate c) -> c.meta.fileSizeBytes()).reversed()
+                .thenComparing(c -> c.meta.path()));
+        assignSizeRanks(candidates);
+    }
+
+    private static long accessRankKey(long accessTimeMs) {
+        return accessTimeMs == 0L ? Long.MIN_VALUE : accessTimeMs;
+    }
+
+    private static void assignAccessRanks(List<Candidate> candidates) {
+        for (int i = 0; i < candidates.size(); i++) {
+            candidates.get(i).accessRank = i + 1;
+        }
+    }
+
+    private static void assignSizeRanks(List<Candidate> candidates) {
+        for (int i = 0; i < candidates.size(); i++) {
+            candidates.get(i).sizeRank = i + 1;
+        }
     }
 
     // ── DB INSERT ────────────────────────────────────────────────────────
@@ -196,5 +239,19 @@ public class ScoringEngine implements Runnable {
         public Tier currentTier() { return currentTier; }
         public Tier targetTier() { return targetTier; }
         public double priorityScore() { return priorityScore; }
+    }
+
+    private static final class Candidate {
+        private final FileMetadata meta;
+        private final Tier currentTier;
+        private final Tier targetTier;
+        private int accessRank;
+        private int sizeRank;
+
+        private Candidate(FileMetadata meta, Tier currentTier, Tier targetTier) {
+            this.meta = meta;
+            this.currentTier = currentTier;
+            this.targetTier = targetTier;
+        }
     }
 }

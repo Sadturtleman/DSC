@@ -4,6 +4,9 @@ import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import edu.dsc.tiering.model.JobStatus;
 import edu.dsc.tiering.model.PendingJob;
+import edu.dsc.tiering.model.Tier;
+import edu.dsc.tiering.scoring.FileMetadata;
+import edu.dsc.tiering.scoring.ScoringEngine;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -72,8 +75,8 @@ class PendingJobRepositoryTest {
 
     @Test
     void claimBatchReturnsTopPriorityAndTransitionsToDispatched() throws Exception {
-        insertPending("/low",  50.0);
-        insertPending("/high", 200.0);
+        insertPending("/low",  150.0);
+        insertPending("/high", 1.0);
         insertPending("/mid",  100.0);
 
         List<PendingJob> claimed = repo.claimBatch(2);
@@ -104,6 +107,21 @@ class PendingJobRepositoryTest {
 
         assertEquals(1, claimed.size());
         assertEquals("/p", claimed.get(0).filePath());
+    }
+
+    @Test
+    void claimTrackableBatchMovesDispatchedToInProgressAndIgnoresPending() throws Exception {
+        insertPending("/waiting", 999.0);
+        long dispatchedId = insertPending("/moving", 100.0);
+        setDispatched(dispatchedId, 0);
+
+        List<PendingJob> claimed = repo.claimTrackableBatch(10);
+
+        assertEquals(1, claimed.size());
+        assertEquals("/moving", claimed.get(0).filePath());
+        assertEquals(JobStatus.IN_PROGRESS, claimed.get(0).status());
+        assertEquals("PENDING", statusOf("/waiting"));
+        assertEquals("IN_PROGRESS", statusOf("/moving"));
     }
 
     @Test
@@ -168,6 +186,31 @@ class PendingJobRepositoryTest {
                 assertEquals(3, rs.getInt("retry_count"));
             }
         }
+    }
+
+    @Test
+    void recordHdfsFailureDoesNotReopenCompletedJob() throws Exception {
+        long id = insertPending("/completed", 100.0);
+        setDispatched(id, 0);
+        repo.markCompleted(id);
+
+        repo.recordHdfsFailure(id, "late failure", 3);
+
+        assertEquals("COMPLETED", statusOf("/completed"));
+    }
+
+    @Test
+    void insertPendingJobsIgnoresExistingActivePath() throws Exception {
+        insertPending("/dup", 100.0);
+        var job = new ScoringEngine.ScoredJob(
+                new FileMetadata("/dup", 1024L, 0L, 0L, 7),
+                Tier.HOT,
+                Tier.COLD,
+                1.0);
+
+        int inserted = repo.insertPendingJobs(List.of(job));
+
+        assertEquals(0, inserted);
     }
 
     // --- helpers ---

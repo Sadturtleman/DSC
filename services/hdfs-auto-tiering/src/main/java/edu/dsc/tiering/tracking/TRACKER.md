@@ -25,7 +25,7 @@ java -jar target/hdfs-auto-tiering.jar /etc/dsc/tracker.yaml
 |---|---|
 | PostgreSQL 14+ | `db/migrations/V001__pending_jobs.sql` 이 적용된 상태 |
 | Hadoop 3.3.x | `dfs.storage.policy.satisfier.mode=external` |
-| Java 17 | 빌드 & 런타임 |
+| Java 11 | 빌드 & 런타임 |
 
 ## 구조
 
@@ -47,10 +47,10 @@ edu.dsc.tiering
 │
 ├── repository/
 │   └── PendingJobRepository.java    HikariCP 기반 JDBC CRUD
-│                                    ├── claimBatch()       FOR UPDATE SKIP LOCKED
-│                                    ├── markCompleted()    DISPATCHED → COMPLETED
-│                                    ├── markFailed()       DISPATCHED → FAILED (타임아웃)
-│                                    └── touchCheckedAt()   last_checked_at 갱신
+│                                    ├── claimTrackableBatch() FOR UPDATE SKIP LOCKED
+│                                    ├── markCompleted()       IN_PROGRESS → COMPLETED
+│                                    ├── markFailed()          IN_PROGRESS → FAILED (타임아웃)
+│                                    └── touchCheckedAt()      no-op; dispatched_at 보존
 │
 ├── hdfs/
 │   ├── HdfsApiCaller.java           스토리지 정책 변경 및 SPS 호출 (hdfs-auto-tiering 소유)
@@ -68,7 +68,7 @@ edu.dsc.tiering
 │   └── BatchScheduler.java          PENDING → DISPATCHED 전이 + HdfsApiCaller 호출
 │
 └── tracking/
-    └── CompletionTracker.java       DISPATCHED → COMPLETED | FAILED 검증 루프
+    └── CompletionTracker.java       DISPATCHED/IN_PROGRESS → COMPLETED | FAILED 검증 루프
         ├── runCycle()         한 폴링 사이클 실행
         ├── checkOne()         Semaphore 획득 후 단일 파일 검사
         └── Semaphore          NN RPC 동시 호출 수 제한
@@ -119,9 +119,8 @@ CompletionTracker + HdfsPolicyChecker
 
 | 컬럼 | 읽기 | 쓰기 |
 |---|---|---|
-| `status` | `DISPATCHED` 만 조회 | `COMPLETED` / `FAILED` 로 전이 |
+| `status` | `DISPATCHED` / `IN_PROGRESS` 조회 | `IN_PROGRESS` / `COMPLETED` / `FAILED` 로 전이 |
 | `dispatched_at` | 타임아웃 기준 | — |
-| `last_checked_at` | 폴링 우선순위 정렬 | 매 사이클 갱신 |
 | `completed_at` | — | `COMPLETED` 전이 시 기록 |
 
 ## 테스트
@@ -145,7 +144,7 @@ mvn -Dtest=CompletionTrackerTest test             # 단위 테스트만
 |---|---|
 | **Java HdfsAdmin SDK** | hdfs-auto-tiering 와 동일한 Hadoop 클라이언트 jar 재사용. subprocess `hdfs fsck` 대비 NameNode read lock 점유 시간이 짧고 예외 처리가 명확. |
 | **`getBlockLocations`** | `hdfs fsck` 는 파일 트리 전체를 순회하며 read lock 을 오래 잡음. `DFSClient.getBlockLocations` 는 해당 파일만 조회 → NN 부하 최소화. |
-| **claimBatch 후 즉시 커밋** | SELECT FOR UPDATE SKIP LOCKED 로 락을 잡은 뒤 즉시 커밋해 HDFS 호출(느림) 동안 PG 행 락이 유지되지 않도록 함. 다른 Tracker 인스턴스가 굶주리는 문제 방지. |
+| **claimTrackableBatch 후 즉시 커밋** | SELECT FOR UPDATE SKIP LOCKED 로 락을 잡은 뒤 즉시 커밋해 HDFS 검증 RPC 동안 PG 행 락이 유지되지 않도록 함. 다른 Tracker 인스턴스가 굶주리는 문제 방지. |
 | **Semaphore(3)** | NN RPC 동시 호출 수를 단일 knob 으로 제한. `namenode-semaphore` 설정값으로 조정 가능. |
 | **타임아웃 기준: `dispatched_at`** | hdfs-auto-tiering 가 DISPATCHED 로 마킹하는 시점이 "시도 시점". 이 이후 60분이 지나도 완료되지 않으면 FAILED. |
 | **WARM 정책: SSD 1개 이상** | HDFS One_SSD 정책은 복제본 중 1개만 SSD 에 저장. 전체 비율 대신 존재 여부로 판정. |
@@ -159,27 +158,30 @@ docker compose up -d
 bash scripts/smoke-test.sh
 
 # 2) 빌드 + 테스트
-cd ../../services/completion-tracker
+cd ../../services/hdfs-auto-tiering
 mvn -q -DskipTests package
 mvn test
 
-# 3) hdfs-auto-tiering 와 함께 기동
-#    터미널 1: hdfs-auto-tiering
-java -jar ../hdfs-auto-tiering/target/hdfs-auto-tiering-0.1.0-SNAPSHOT.jar
+# 3) 실제 HDFS 파일을 만들고 FSImage 저장
+dd if=/dev/zero of=/tmp/tiering-sample.bin bs=1M count=128
+hdfs dfs -mkdir -p /tiering-test
+hdfs storagepolicies -setStoragePolicy -path /tiering-test -policy ALL_SSD
+hdfs dfs -put -f /tmp/tiering-sample.bin /tiering-test/sample.bin
+hdfs storagepolicies -setStoragePolicy -path /tiering-test/sample.bin -policy ALL_SSD
+hdfs dfs -touch -a -t "$(date -d '120 days ago' +%Y%m%d:%H%M%S)" /tiering-test/sample.bin
+hdfs dfsadmin -safemode enter
+hdfs dfsadmin -saveNamespace
+hdfs dfsadmin -safemode leave
 
-#    터미널 2: completion-tracker
-java -jar target/completion-tracker-0.1.0-SNAPSHOT.jar
-
-# 4) PENDING job 수동 주입 → DISPATCHED(scheduler) → COMPLETED(tracker) 확인
-docker compose exec postgres psql -U dsc -d dsc_tiering -c \
-  "INSERT INTO pending_jobs
-       (file_path, file_size_bytes, current_tier, target_tier, priority_score, scored_at)
-   VALUES ('/tiering-test/sample.bin', 134217728, 'HOT', 'COLD', 99.0, NOW());"
+# 4) 통합 데몬 기동: 첫 ScoringEngine 사이클에서 PENDING 생성 후 Scheduler/Tracker 진행
+java -jar target/hdfs-auto-tiering.jar &
+DAEMON_PID=$!
 
 # 5) 상태 변화 모니터링
 watch -n 10 "docker compose exec postgres psql -U dsc -d dsc_tiering -c \
-  \"SELECT id, file_path, status, dispatched_at, completed_at
-      FROM pending_jobs ORDER BY id DESC LIMIT 10;\""
+  \"SELECT job_id, file_path, status, dispatched_at, completed_at
+      FROM pending_jobs ORDER BY job_id DESC LIMIT 10;\""
+kill "$DAEMON_PID"
 ```
 
 ### 알려진 함정
@@ -202,6 +204,6 @@ watch -n 10 "docker compose exec postgres psql -U dsc -d dsc_tiering -c \
 
 batch-scheduler README §팀 협의 필요 사항 의 미해결 항목 중 tracker 에 직접 영향:
 
-1. `timeout-minutes` 기본값 (T_dispatch) — 현재 60분, 실제 클러스터 이동 속도에 맞게 조정 필요
+1. `timeout-minutes` 기본값 — 현재 60분, 실제 클러스터 이동 속도에 맞게 조정 필요
 2. tier 별 통계 집계 view — `COMPLETED` 건수·소요시간 집계를 tracker 가 기록할지 별도 view 로 뺄지
 3. LF / CRLF 결정 문제
