@@ -62,7 +62,12 @@
 * **PostgreSQL 서비스 기동**: `sudo service postgresql start`
   * **상황**: WSL2 재시작 후 서비스 구동 전 DB를 수동으로 띄워야 할 때 사용합니다.
 * **DB 접속 및 상태 조회**: `psql -h localhost -U dsc -d dsc_tiering`
-  * **상황**: `pending_jobs` 테이블에 작업 목록이 정상적으로 적재되었는지, 데몬 실행 과정에서 `status`(PENDING -> DISPATCHED -> IN_PROGRESS -> COMPLETED)가 올바르게 전이되는지 확인할 때 사용합니다.
+  * **상황**: `pending_jobs` 테이블에 작업 목록이 정상적으로 적재되었는지 수동으로 쿼리하여 확인할 때 사용합니다.
+* **DB 작업 스케줄링 실시간 모니터링**: 
+  ```bash
+  watch -n 2 "psql -h localhost -U dsc -d dsc_tiering -c \"SELECT job_id, file_path, current_tier, target_tier, status FROM pending_jobs ORDER BY job_id DESC LIMIT 20;\""
+  ```
+  * **상황**: 오토 티어링 데몬이 대상 파일들을 스케줄링하고 HDFS로 명령을 내리는(Dispatch) 과정을 실시간(2초마다 갱신)으로 추적하며, `status`(PENDING -> DISPATCHED -> IN_PROGRESS -> COMPLETED)가 전이되는 과정을 모니터링할 때 사용합니다.
 
 ---
 
