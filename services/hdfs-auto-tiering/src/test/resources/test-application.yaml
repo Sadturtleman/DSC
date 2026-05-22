@@ -29,3 +29,11 @@ scheduler:
       inter-batch-wait-ms: 500
   concurrency: 4
   max-retries: 3
+
+tracker:
+  poll-interval-seconds: 45
+  timeout-minutes: 60
+  batch-size: 20
+  completion-ratio: 0.95
+  max-workers: 5
+  nodename-semaphore: 3

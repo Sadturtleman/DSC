@@ -137,14 +137,16 @@ public class FsImageFetcher implements AutoCloseable {
         PipedInputStream  source = new PipedInputStream(sink, 1 << 20); // 1MB 버퍼
 
         // OIV 변환 스레드
-        Thread oivThread = Thread.ofVirtual().start(() -> {
+        Thread oivThread = new Thread(() -> {
             try (PrintStream ps = new PrintStream(sink)) {
                 PBImageXmlWriter writer = new PBImageXmlWriter(hadoopConf, ps);
                 writer.visit(new RandomAccessFile(imageFile.toFile(), "r"));
             } catch (Exception e) {
                 log.error("OIV 변환 오류: {}", e.getMessage(), e);
             }
-        });
+        }, "oiv-converter");
+        oivThread.setDaemon(true);
+        oivThread.start();
 
         // XML 파싱 (메인 스레드)
         List<FileMetadata> result;
@@ -183,7 +185,7 @@ public class FsImageFetcher implements AutoCloseable {
             while (xsr.hasNext()) {
                 int event = xsr.next();
                 switch (event) {
-                    case XMLStreamConstants.START_ELEMENT -> {
+                    case XMLStreamConstants.START_ELEMENT:
                         currentTag = xsr.getLocalName();
                         if (TAG_INODE.equals(currentTag)) {
                             inInode = true;
@@ -191,21 +193,19 @@ public class FsImageFetcher implements AutoCloseable {
                             type = null; path = null; size = 0; atime = 0;
                             mtime = 0; storagePolicy = 0;
                         }
-                    }
-                    case XMLStreamConstants.CHARACTERS -> {
+                        break;
+                    case XMLStreamConstants.CHARACTERS:
                         if (!inInode || currentTag == null) break;
                         String text = xsr.getText().trim();
                         if (text.isEmpty()) break;
-                        switch (currentTag) {
-                            case TAG_TYPE          -> type = text;
-                            case TAG_PATH          -> path = text;
-                            case TAG_FILESIZE      -> size = parseLong(text);
-                            case TAG_ATIME         -> atime = parseLong(text);
-                            case TAG_MTIME         -> mtime = parseLong(text);
-                            case TAG_STORAGEPOLICY -> storagePolicy = parseInt(text);
-                        }
-                    }
-                    case XMLStreamConstants.END_ELEMENT -> {
+                        if (TAG_TYPE.equals(currentTag))          type = text;
+                        else if (TAG_PATH.equals(currentTag))     path = text;
+                        else if (TAG_FILESIZE.equals(currentTag)) size = parseLong(text);
+                        else if (TAG_ATIME.equals(currentTag))    atime = parseLong(text);
+                        else if (TAG_MTIME.equals(currentTag))    mtime = parseLong(text);
+                        else if (TAG_STORAGEPOLICY.equals(currentTag)) storagePolicy = parseInt(text);
+                        break;
+                    case XMLStreamConstants.END_ELEMENT:
                         if (TAG_INODE.equals(xsr.getLocalName()) && inInode) {
                             inInode = false;
                             if (INODE_TYPE_FILE.equals(type) && path != null && size >= 0) {
@@ -214,7 +214,9 @@ public class FsImageFetcher implements AutoCloseable {
                             }
                             currentTag = null;
                         }
-                    }
+                        break;
+                    default:
+                        break;
                 }
             }
             xsr.close();

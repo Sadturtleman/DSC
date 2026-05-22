@@ -25,7 +25,7 @@ java -jar target/hdfs-auto-tiering.jar /etc/dsc/scheduler.yaml
 |---|---|
 | PostgreSQL 14+ | `db/migrations/V001__pending_jobs.sql` 가 적용된 상태 |
 | Hadoop 3.3.x | External SPS 활성화: `dfs.storage.policy.satisfier.mode=external` |
-| Java 17 | 빌드 & 런타임 |
+| Java 11 | 빌드 & 런타임 |
 
 ## 구조
 

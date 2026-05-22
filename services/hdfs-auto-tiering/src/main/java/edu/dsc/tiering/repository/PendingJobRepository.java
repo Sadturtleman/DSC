@@ -27,22 +27,21 @@ public class PendingJobRepository {
      * SKIP LOCKED 패턴으로 멀티 인스턴스 동시 실행 시에도 안전.
      */
     public List<PendingJob> claimBatch(int batchSize) throws SQLException {
-        final String sql = """
-                UPDATE pending_jobs
-                   SET status = 'DISPATCHED',
-                       dispatched_at = NOW()
-                 WHERE job_id IN (
-                     SELECT job_id FROM pending_jobs
-                      WHERE status = 'PENDING'
-                      ORDER BY priority_score DESC, scored_at ASC
-                      LIMIT ?
-                      FOR UPDATE SKIP LOCKED
-                 )
-                 RETURNING job_id, file_path, file_size_bytes,
-                           current_tier, target_tier, priority_score, status,
-                           scored_at, dispatched_at, completed_at,
-                           retry_count, last_error, fsimage_snapshot_id
-                """;
+        final String sql =
+                "UPDATE pending_jobs"
+                + "   SET status = 'DISPATCHED',"
+                + "       dispatched_at = NOW()"
+                + " WHERE job_id IN ("
+                + "     SELECT job_id FROM pending_jobs"
+                + "      WHERE status = 'PENDING'"
+                + "      ORDER BY priority_score DESC, scored_at ASC"
+                + "      LIMIT ?"
+                + "      FOR UPDATE SKIP LOCKED"
+                + " )"
+                + " RETURNING job_id, file_path, file_size_bytes,"
+                + "           current_tier, target_tier, priority_score, status,"
+                + "           scored_at, dispatched_at, completed_at,"
+                + "           retry_count, last_error, fsimage_snapshot_id";
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setInt(1, batchSize);
@@ -58,16 +57,15 @@ public class PendingJobRepository {
      * HDFS 호출 동기 실패 시: DISPATCHED → PENDING (retry++) 또는 한도 초과 시 FAILED.
      */
     public void recordHdfsFailure(long jobId, String errorMessage, int maxRetries) throws SQLException {
-        final String sql = """
-                UPDATE pending_jobs
-                   SET status = CASE WHEN retry_count + 1 >= ?
-                                     THEN 'FAILED'::job_status
-                                     ELSE 'PENDING'::job_status END,
-                       retry_count = retry_count + 1,
-                       dispatched_at = NULL,
-                       last_error = ?
-                 WHERE job_id = ?
-                """;
+        final String sql =
+                "UPDATE pending_jobs"
+                + "   SET status = CASE WHEN retry_count + 1 >= ?"
+                + "                     THEN 'FAILED'::job_status"
+                + "                     ELSE 'PENDING'::job_status END,"
+                + "       retry_count = retry_count + 1,"
+                + "       dispatched_at = NULL,"
+                + "       last_error = ?"
+                + " WHERE job_id = ?";
         try (Connection c = dataSource.getConnection();
              PreparedStatement ps = c.prepareStatement(sql)) {
             ps.setInt(1, maxRetries);

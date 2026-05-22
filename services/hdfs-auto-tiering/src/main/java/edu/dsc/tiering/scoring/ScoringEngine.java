@@ -179,10 +179,22 @@ public class ScoringEngine implements Runnable {
      * 스코어링 결과를 DB INSERT 전까지 임시로 담는 DTO.
      * {@code PendingJobRepository.insertPendingJobs}가 이 타입을 받는다.
      */
-    public record ScoredJob(
-            FileMetadata meta,
-            Tier         currentTier,
-            Tier         targetTier,
-            double       priorityScore
-    ) {}
+    public static final class ScoredJob {
+        private final FileMetadata meta;
+        private final Tier currentTier;
+        private final Tier targetTier;
+        private final double priorityScore;
+
+        public ScoredJob(FileMetadata meta, Tier currentTier, Tier targetTier, double priorityScore) {
+            this.meta = meta;
+            this.currentTier = currentTier;
+            this.targetTier = targetTier;
+            this.priorityScore = priorityScore;
+        }
+
+        public FileMetadata meta() { return meta; }
+        public Tier currentTier() { return currentTier; }
+        public Tier targetTier() { return targetTier; }
+        public double priorityScore() { return priorityScore; }
+    }
 }

@@ -31,3 +31,11 @@ scheduler:
   # 단일 배치 내 병렬 HDFS 호출 수 제한 (논리적 대역폭 관리)
   concurrency: 8
   max-retries: 3
+
+tracker:
+  poll-interval-seconds: 45
+  timeout-minutes: 60
+  batch-size: 20
+  completion-ratio: 0.95
+  max-workers: 5
+  nodename-semaphore: 3
