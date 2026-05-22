@@ -101,4 +101,56 @@ public class PendingJobRepository {
         if (s == null) return null;
         return s.length() <= max ? s : s.substring(0, max);
     }
+
+    public int insertPendingJobs(List<edu.dsc.tiering.scoring.ScoringEngine.ScoredJob> jobs) throws SQLException {
+        if (jobs.isEmpty()) return 0;
+        final String sql =
+                "INSERT INTO pending_jobs (file_path, file_size_bytes, current_tier, target_tier, priority_score, status, scored_at) " +
+                "VALUES (?, ?, ?::tier, ?::tier, ?, 'PENDING'::job_status, NOW()) " +
+                "ON CONFLICT (file_path) DO NOTHING";
+        int insertedCount = 0;
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            for (var job : jobs) {
+                ps.setString(1, job.meta().path());
+                ps.setLong(2, job.meta().size());
+                ps.setString(3, job.currentTier().name());
+                ps.setString(4, job.targetTier().name());
+                ps.setDouble(5, job.priorityScore());
+                ps.addBatch();
+            }
+            int[] results = ps.executeBatch();
+            for (int r : results) {
+                if (r > 0) insertedCount += r;
+            }
+        }
+        return insertedCount;
+    }
+
+    public void markCompleted(long jobId) {
+        final String sql = "UPDATE pending_jobs SET status = 'COMPLETED'::job_status, completed_at = NOW() WHERE job_id = ?";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, jobId);
+            ps.executeUpdate();
+        } catch (SQLException e) { throw new RuntimeException(e); }
+    }
+
+    public void markFailed(long jobId) {
+        final String sql = "UPDATE pending_jobs SET status = 'FAILED'::job_status WHERE job_id = ?";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, jobId);
+            ps.executeUpdate();
+        } catch (SQLException e) { throw new RuntimeException(e); }
+    }
+
+    public void touchCheckedAt(long jobId) {
+        final String sql = "UPDATE pending_jobs SET dispatched_at = NOW() WHERE job_id = ?";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, jobId);
+            ps.executeUpdate();
+        } catch (SQLException e) { throw new RuntimeException(e); }
+    }
 }

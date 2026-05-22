@@ -92,7 +92,15 @@ public class HdfsPolicyChecker implements AutoCloseable {
     // ── 내부 판정 로직 ──────────────────────────────────────────────────
 
     private boolean evaluate(List<LocatedBlock> blocks, Tier tier) {
-        String[] expected = tier.expectedStorageTypes();
+        String[] expected;
+        boolean isMixed = false;
+        switch (tier) {
+            case HOT:  expected = new String[]{"SSD"}; break;
+            case WARM: expected = new String[]{"SSD"}; isMixed = true; break;
+            case COLD: expected = new String[]{"ARCHIVE"}; break;
+            default: return false;
+        }
+
         int total = 0, hits = 0;
 
         for (LocatedBlock block : blocks) {
@@ -109,7 +117,7 @@ public class HdfsPolicyChecker implements AutoCloseable {
         }
 
         // WARM(One_SSD): SSD 1개 이상 존재하면 충족
-        if (tier.isMixedPolicy()) return hits > 0;
+        if (isMixed) return hits > 0;
 
         double ratio = (double) hits / total;
         log.debug("완료율 tier={} {}/{} = {:.2f}", tier, hits, total, ratio);

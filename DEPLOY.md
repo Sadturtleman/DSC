@@ -1,237 +1,123 @@
 # DSC Auto-Tiering 빌드 및 배포 가이드
 
-본 문서는 `INFRA.md`에 따라 구축된 **WSL2 Ubuntu 22.04 + Hadoop 3.4.1 (Java 11)** 환경에 `hdfs-auto-tiering` 서비스를 빌드하고 배포하는 절차를 안내합니다.
+본 문서는 `INFRA.md`에 따라 구축된 서버(WSL2 Ubuntu) 환경과 개발 PC(Windows) 환경이 완전히 분리된 상황을 기준으로, `hdfs-auto-tiering` 서비스를 빌드하고 배포하는 절차를 안내합니다.
 
 ---
 
 ## 1. 사전 조건
 
-아래 항목이 모두 완료되어 있어야 합니다.
-
-| 항목 | 확인 방법 |
-|---|---|
-| WSL2 Ubuntu 22.04 | `wsl -l -v` (VERSION = 2) |
-| Java 11 (OpenJDK) | `java -version` (11.0.x) |
-| Hadoop 3.4.1 바이너리 | `hadoop version` |
-| NameNode + DataNode 3대 + External SPS 기동 | `jps` 로 데몬 확인 |
-| YARN ResourceManager + NodeManager 기동 | `yarn node -list` |
-| PostgreSQL 기동 + DDL 적용 | `psql -h localhost -U dsc -d dsc_tiering -c "\dt"` |
-| Maven 3.6+ (빌드용) | `mvn -version` |
-
-> **Maven 미설치 시:**
-> ```bash
-> sudo apt install -y maven
-> ```
+| 환경 | 항목 | 확인 방법 |
+|---|---|---|
+| **개발 PC (Windows)** | Java 11 이상 | `java -version` |
+| **개발 PC (Windows)** | Maven (수동 빌드 시 필요) | `mvn -version` |
+| **서버 (Ubuntu)** | Hadoop 3.4.1 데몬 정상 기동 | `jps` (NameNode, DataNode, SPS 확인) |
+| **서버 (Ubuntu)** | YARN 환경 정상 기동 | `yarn node -list` |
+| **서버 (Ubuntu)** | PostgreSQL 기동 + DDL | `psql -h localhost -U dsc -d dsc_tiering -c "\dt"` |
 
 ---
 
-## 2. 빌드
+## 2. 운영 환경 자동 배포 파이프라인 (권장)
 
-### 2-1. Fat JAR 빌드
+개발 PC와 서버 간의 파일 복사(`scp` 등)를 생략하고, **GitHub Actions**와 **GitHub Releases**를 연동하여 완전 자동화된 배포를 수행합니다.
 
-`maven-shade-plugin`이 `pom.xml`에 설정되어 있으므로 모든 의존성을 포함하는 단일 Fat JAR이 생성됩니다.
+### 2-1. GitHub Actions를 통한 자동 빌드 및 릴리즈
+개발 PC(Windows)에서는 소스 코드를 수정한 뒤, 버전을 명시하는 태그(Tag)를 달아 GitHub에 푸시하기만 하면 됩니다.
+
+```powershell
+# 개발 PC(Windows)에서 실행
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+태그가 푸시되면 `.github/workflows/release.yml`에 의해 **GitHub Actions**가 자동으로 코드를 빌드(`mvn clean package`)하고, `hdfs-auto-tiering.jar` 파일을 해당 릴리즈의 Asset으로 업로드합니다.
+
+### 2-2. 서버(Ubuntu)에서 자동 배포 스크립트 실행
+GitHub에 릴리즈가 완료되면, 서버(Ubuntu) 터미널에서 `INFRA.md`에 정의된 배포 스크립트를 실행합니다.
 
 ```bash
-cd ~/DSC/services/hdfs-auto-tiering
+# 서버(Ubuntu)에서 실행
+~/deploy-auto-tiering.sh
+```
+
+해당 스크립트는 다음 작업을 자동으로 수행합니다:
+1. GitHub 최신 릴리즈에서 `jar` 파일을 서버 임시 경로로 다운로드
+2. HDFS 경로(`/apps/hdfs-auto-tiering/lib/`)에 다운로드한 `jar` 파일 업로드
+3. 기존 YARN Service 중지 및 완전 삭제(`yarn app -destroy`)
+4. 새로운 `jar` 파일로 YARN Service 재기동(`yarn app -launch`)
+
+---
+
+## 3. 로컬 빌드 및 직접 실행 (개발/테스트용)
+
+자동 배포를 거치지 않고, 윈도우 로컬 환경에서 직접 빌드하거나 테스트해야 할 때 사용하는 방법입니다.
+
+### 3-1. Windows에 메이븐(Maven) 설치
+윈도우에 Maven이 없다면 PowerShell(관리자 권한 불필요)에서 아래 명령어로 설치합니다.
+
+```powershell
+winget install Apache.Maven
+```
+> **주의:** 설치 완료 후 반드시 PowerShell 창을 닫고 새로 열어야 `mvn` 명령어가 인식됩니다.
+
+### 3-2. 로컬 빌드 (Fat JAR 생성)
+소스코드가 있는 경로로 이동하여 패키징을 수행합니다.
+
+```powershell
+cd C:\Users\0w0i0\Desktop\DSC\services\hdfs-auto-tiering
 mvn clean package -DskipTests
 ```
+빌드 성공 시 `target\hdfs-auto-tiering.jar` 파일이 생성됩니다.
 
-빌드 성공 시 생성 파일: `target/hdfs-auto-tiering.jar`
+### 3-3. 로컬 직접 실행
+YARN에 올리지 않고 윈도우 호스트에서 데몬을 직접 띄워 테스트할 수 있습니다.
+(`src/main/resources/application.yaml` 내부의 접속 정보가 로컬 환경과 일치하는지 확인 후 실행하세요.)
 
-### 2-2. 빌드 검증
+```powershell
+# 기본 설정 사용
+java -jar target\hdfs-auto-tiering.jar
 
-```bash
-java -jar target/hdfs-auto-tiering.jar --help 2>&1 || true
-ls -lh target/hdfs-auto-tiering.jar
+# 또는 커스텀 설정 파일 지정
+java -jar target\hdfs-auto-tiering.jar C:\path\to\custom-config.yaml
 ```
 
 ---
 
-## 3. 로컬 직접 실행 (개발/디버깅용)
+## 4. YARN Service 배포 내부 동작 (참고사항)
 
-YARN을 거치지 않고 호스트에서 직접 JAR를 실행하여 동작을 확인합니다.
+자동 배포 스크립트(`deploy-auto-tiering.sh`)가 뒷단에서 수행하는 구체적인 YARN 배포 동작은 다음과 같습니다. 수동 조작이 필요할 때 참고하세요.
 
-### 3-1. application.yaml 설정 확인
+### 4-1. HDFS 디렉터리 구조
+JAR 파일 및 설정 파일은 HDFS의 다음 경로에 위치해야 합니다.
+- JAR 파일: `hdfs:///apps/hdfs-auto-tiering/lib/hdfs-auto-tiering.jar`
+- 설정 파일: `hdfs:///apps/hdfs-auto-tiering/config/hdfs-auto-tiering-config.yaml`
 
-`src/main/resources/application.yaml` 내의 연결 정보가 로컬 환경과 일치하는지 확인합니다.
+### 4-2. YARN Service 정의 파일 (`hdfs-auto-tiering-service.json`)
+서버의 `~` 경로에 위치하며, YARN Service 프레임워크가 앱을 띄우는 명세서 역할을 합니다.
+내부적으로 위 HDFS 경로에서 파일을 내려받고 `java -jar` 명령어로 컨테이너를 실행합니다.
 
-```yaml
-database:
-  url: jdbc:postgresql://localhost:5432/dsc_tiering
-  username: dsc
-  password: dsc
-
-hdfs:
-  fs-default-name: hdfs://localhost:9000
-```
-
-> `INFRA.md`에서 NameNode RPC 포트는 **9000** 입니다 (`fs.defaultFS = hdfs://localhost:9000`).
-
-### 3-2. 실행
+### 4-3. YARN 서비스 관리 명령어
+서비스 상태에 문제가 생겼을 경우, 서버 터미널에서 아래 명령어로 제어합니다.
 
 ```bash
-# 기본 classpath application.yaml 사용
-java -jar target/hdfs-auto-tiering.jar
-
-# 또는 외부 yaml 경로 지정
-java -jar target/hdfs-auto-tiering.jar /path/to/custom-application.yaml
-```
-
-정상 동작 시 `window=... claimed=0 files` 로그가 `poll-interval-seconds` 간격으로 출력됩니다.
-
-### 3-3. 수동 테스트 (PENDING row 주입)
-
-별도 터미널에서 DB에 테스트 row를 삽입해 DISPATCHED 전이를 확인합니다.
-
-```bash
-psql -h localhost -U dsc -d dsc_tiering -c \
-  "INSERT INTO pending_jobs (file_path, file_size_bytes, current_tier, target_tier, priority_score, scored_at)
-   VALUES ('/tiering-test/sample.bin', 1048576, 'HOT', 'COLD', 99.0, NOW());"
-```
-
----
-
-## 4. YARN Service 배포 (운영용)
-
-### 4-1. HDFS에 JAR 및 설정 파일 업로드
-
-```bash
-hdfs dfs -mkdir -p /apps/dsc-tiering/
-hdfs dfs -put -f target/hdfs-auto-tiering.jar /apps/dsc-tiering/
-hdfs dfs -put -f src/main/resources/application.yaml /apps/dsc-tiering/
-
-# 업로드 확인
-hdfs dfs -ls /apps/dsc-tiering/
-```
-
-### 4-2. Yarnfile 작성
-
-프로젝트 루트에 `Yarnfile.json`을 생성합니다.
-
-```json
-{
-  "name": "hdfs-auto-tiering",
-  "version": "0.1.0",
-  "components": [
-    {
-      "name": "tiering-daemon",
-      "number_of_containers": 1,
-      "artifact": {
-        "id": "hdfs:///apps/dsc-tiering/hdfs-auto-tiering.jar",
-        "type": "ARCHIVE"
-      },
-      "resource": {
-        "cpus": 2,
-        "memory": "1024"
-      },
-      "launch_command": "$JAVA_HOME/bin/java -jar hdfs-auto-tiering.jar application.yaml",
-      "configuration": {
-        "env": {
-          "JAVA_HOME": "/usr/lib/jvm/java-11-openjdk-amd64",
-          "HADOOP_CONF_DIR": "$HOME/hadoop-conf/namenode",
-          "HADOOP_HOME": "$HOME/hadoop"
-        },
-        "files": [
-          {
-            "type": "STATIC",
-            "src_file": "hdfs:///apps/dsc-tiering/application.yaml",
-            "dest_file": "application.yaml"
-          }
-        ]
-      }
-    }
-  ]
-}
-```
-
-### 4-3. YARN Service 기동
-
-```bash
-yarn app -launch hdfs-auto-tiering ./Yarnfile.json
-```
-
-### 4-4. 상태 확인
-
-```bash
-# 서비스 상태 조회
+# 상태 확인
 yarn app -status hdfs-auto-tiering
+yarn app -list -appTypes YARN-SERVICE
 
-# 컨테이너 로그 확인
+# 강제 중지 및 삭제
+yarn app -stop hdfs-auto-tiering
+yarn app -destroy hdfs-auto-tiering
+
+# 컨테이너 로그 확인 (에러 추적 시 유용)
 yarn logs -applicationId <application_id>
 ```
 
-### 4-5. 서비스 중지
-
-```bash
-yarn app -stop hdfs-auto-tiering
-```
-
-### 4-6. 서비스 삭제 (완전 제거)
-
-```bash
-yarn app -destroy hdfs-auto-tiering
-```
-
 ---
 
-## 5. GitHub Actions 자동 빌드 및 릴리즈
-
-버전 태그(`v*`) Push 시 자동으로 Fat JAR을 빌드하고 GitHub Releases에 첨부하는 CI/CD 파이프라인입니다.
-
-### 5-1. 워크플로우 파일 생성
-
-`.github/workflows/release.yml` 파일을 생성합니다.
-
-```yaml
-name: Build and Release JAR
-
-on:
-  push:
-    tags:
-      - 'v*'
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 11
-        uses: actions/setup-java@v4
-        with:
-          java-version: '11'
-          distribution: 'temurin'
-          cache: maven
-
-      - name: Build Fat JAR
-        run: mvn -f services/hdfs-auto-tiering/pom.xml clean package -DskipTests
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: services/hdfs-auto-tiering/target/hdfs-auto-tiering.jar
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-### 5-2. 릴리즈 수행 방법
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-태그가 Push되면 GitHub Actions가 자동으로 JAR을 빌드하고, 해당 태그의 Release 페이지에 `hdfs-auto-tiering.jar`가 첨부됩니다.
-
----
-
-## 6. 트러블슈팅
+## 5. 트러블슈팅
 
 | 증상 | 원인 | 해결 |
 |---|---|---|
-| `UnsupportedClassVersionError` | JAR이 Java 17로 빌드됨 | `pom.xml`의 `maven.compiler.source/target`이 `11`인지 확인 후 재빌드 |
-| `Connection refused (localhost:9000)` | NameNode 미기동 | `HADOOP_CONF_DIR=~/hadoop-conf/namenode hdfs --daemon start namenode` |
-| `FATAL: role "dsc" does not exist` | PostgreSQL 미설정 | `INFRA.md` §15 PostgreSQL 설정 참조 |
-| YARN 컨테이너 즉시 FAILED | 메모리 부족 또는 JAR 경로 오류 | `yarn logs`로 원인 확인, Yarnfile의 memory 값 조정 |
-| `FileNotFoundException: application.yaml` | HDFS에 설정 파일 미업로드 | §4-1 HDFS 업로드 단계 재수행 |
+| `CommandNotFoundException: mvn` | 윈도우 환경 변수 반영 안 됨 | `winget install` 후 열려있는 터미널 창을 껐다 켜기 |
+| `UnsupportedClassVersionError` | JAR이 Java 17+로 빌드됨 | `java -version` 확인. `pom.xml` 소스가 `11`인지 확인 |
+| YARN 서비스 기동 실패 (STABLE 안 됨) | 리소스 부족 / 권한 문제 | `yarn logs -applicationId ...` 로 원인 분석. NameNode UI(9870) 확인 |
+| `Connection refused (localhost:5432)` | DB 기동 안 됨 | 서버에서 `sudo service postgresql start` 수행 확인 |

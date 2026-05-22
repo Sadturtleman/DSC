@@ -2,7 +2,7 @@ package edu.dsc.tiering.tracking;
 
 import edu.dsc.tiering.config.AppConfig;
 import edu.dsc.tiering.hdfs.HdfsPolicyChecker;
-import edu.dsc.tiering.model.DispatchedJob;
+import edu.dsc.tiering.model.PendingJob;
 import edu.dsc.tiering.repository.PendingJobRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.*;
+import java.util.stream.Collectors;
 
 /**
  * DISPATCHED 상태 job 을 주기적으로 폴링해 블록 이동 완료 여부를 검증하고
@@ -85,7 +86,7 @@ public class CompletionTracker implements Runnable {
      */
     void runCycle() {
         // Step 1: DISPATCHED 행 점유 → 즉시 커밋 (락 해제)
-        List<DispatchedJob> jobs = repo.claimBatch(cfg.batchSize());
+        List<PendingJob> jobs = repo.claimBatch(cfg.batchSize());
         if (jobs.isEmpty()) {
             log.debug("DISPATCHED job 없음");
             return;
@@ -96,7 +97,7 @@ public class CompletionTracker implements Runnable {
         ExecutorService pool = Executors.newFixedThreadPool(cfg.maxWorkers());
         List<Future<Boolean>> futures = jobs.stream()
                 .<Future<Boolean>>map(job -> pool.submit(() -> checkOne(job)))
-                .toList();
+                .collect(Collectors.toList());
         pool.shutdown();
         try {
             // 최대 pollInterval 만큼 대기 — 초과 시 다음 사이클에서 재처리
@@ -108,14 +109,14 @@ public class CompletionTracker implements Runnable {
 
         // Step 3: 결과 DB 반영
         for (int i = 0; i < jobs.size(); i++) {
-            DispatchedJob job    = jobs.get(i);
-            Duration      elapsed = Duration.between(job.dispatchedAt(), Instant.now());
+            PendingJob job    = jobs.get(i);
+            Duration      elapsed = Duration.between(job.dispatchedAt(), java.time.OffsetDateTime.now());
 
             // 타임아웃 판정 — HDFS 결과보다 우선
             if (elapsed.toMinutes() >= cfg.timeoutMinutes()) {
-                repo.markFailed(job.id());
+                repo.markFailed(job.jobId());
                 log.warn("TIMEOUT id={} path={} elapsed={}min",
-                        job.id(), job.filePath(), elapsed.toMinutes());
+                        job.jobId(), job.filePath(), elapsed.toMinutes());
                 continue;
             }
 
@@ -128,23 +129,23 @@ public class CompletionTracker implements Runnable {
             } catch (ExecutionException e) {
                 // HDFS 오류: DISPATCHED 유지, 다음 사이클에서 재시도
                 log.error("HDFS 검사 오류 id={} path={}: {}",
-                        job.id(), job.filePath(), e.getCause().getMessage());
-                repo.touchCheckedAt(job.id());
+                        job.jobId(), job.filePath(), e.getCause().getMessage());
+                repo.touchCheckedAt(job.jobId());
                 continue;
             }
 
             if (done) {
-                repo.markCompleted(job.id());
+                repo.markCompleted(job.jobId());
             } else {
-                repo.touchCheckedAt(job.id());
-                log.debug("이동 중 id={} path={}", job.id(), job.filePath());
+                repo.touchCheckedAt(job.jobId());
+                log.debug("이동 중 id={} path={}", job.jobId(), job.filePath());
             }
         }
     }
 
     // ── 단일 파일 검사 ─────────────────────────────────────────────────
 
-    private boolean checkOne(DispatchedJob job) {
+    private boolean checkOne(PendingJob job) {
         // Semaphore 로 NameNode 동시 RPC 수 제한
         nnSemaphore.acquireUninterruptibly();
         try {
