@@ -44,9 +44,9 @@ External SPS 데몬이 정상 동작하면 `fsck` 결과의 block location 이
 - NN 의 `dfs.storage.policy.satisfier.mode` 가 정말 `external` 인지 확인
   (`docker compose exec namenode hdfs getconf -confKey dfs.storage.policy.satisfier.mode`)
 
-## batch-scheduler 와 연동
+## hdfs-auto-tiering 와 연동
 
-호스트에서 `services/batch-scheduler` 를 띄울 때는 `application.yaml` 의
+호스트에서 `services/hdfs-auto-tiering` 를 띄울 때는 `application.yaml` 의
 연결 정보가 컨테이너 외부에서 접근 가능해야 한다 — 이미 다음 포트가 노출됨:
 
 | 서비스 | 호스트 포트 |

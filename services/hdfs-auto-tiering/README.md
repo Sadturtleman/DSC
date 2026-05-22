@@ -1,4 +1,4 @@
-# batch-scheduler
+# hdfs-auto-tiering
 
 HDFS Auto-Tiering 의 **batch scheduler + HDFS API caller** 컴포넌트.
 
@@ -13,10 +13,10 @@ External SPS 데몬에 블록 이동을 위임한다.
 mvn -q -DskipTests package
 
 # 실행 (classpath application.yaml 사용)
-java -jar target/batch-scheduler-0.1.0-SNAPSHOT.jar
+java -jar target/hdfs-auto-tiering.jar
 
 # 외부 yaml 경로 지정
-java -jar target/batch-scheduler-0.1.0-SNAPSHOT.jar /etc/dsc/scheduler.yaml
+java -jar target/hdfs-auto-tiering.jar /etc/dsc/scheduler.yaml
 ```
 
 ## 의존 환경
@@ -100,12 +100,12 @@ docker compose up -d
 bash scripts/smoke-test.sh         # SPS 가 정말로 ARCHIVE 로 옮기는지 확인
 
 # 2) 본 컴포넌트 빌드 + 테스트
-cd ../../services/batch-scheduler
+cd ../../services/hdfs-auto-tiering
 mvn -q -DskipTests package
 mvn test
 
 # 3) 빈 DB 상태에서 무한 polling 동작 확인
-java -jar target/batch-scheduler-0.1.0-SNAPSHOT.jar
+java -jar target/hdfs-auto-tiering.jar
 # → 'window=... claimed=0 files' 로그가 poll-interval-seconds 마다 찍히면 정상
 
 # 4) 별 터미널에서 PENDING row 1개 수동 주입 → DISPATCHED 전이 + HDFS 호출 확인

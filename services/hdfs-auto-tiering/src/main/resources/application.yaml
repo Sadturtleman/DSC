@@ -7,8 +7,7 @@ database:
     minimum-idle: 2
 
 hdfs:
-  fs-default-name: hdfs://namenode:8020
-  user: hdfs
+  fs-default-name: hdfs://localhost:9000
   # 논리 티어 → HDFS 스토리지 정책 매핑 (제안서 §4.1)
   policy-mapping:
     HOT: ALL_SSD

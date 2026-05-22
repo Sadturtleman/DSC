@@ -20,7 +20,7 @@ import static org.mockito.Mockito.*;
  * CompletionTracker 단위 테스트.
  * Docker 불필요 — PendingJobRepository / HdfsPolicyChecker 를 Mockito 로 대체.
  *
- * <p>batch-scheduler {@code BatchSchedulerTest} 와 동일한 패턴.
+ * <p>hdfs-auto-tiering {@code BatchSchedulerTest} 와 동일한 패턴.
  * {@code runCycle()} 을 직접 호출해 상태 전이 로직만 격리해서 검증한다.
  */
 class CompletionTrackerTest {

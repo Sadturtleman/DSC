@@ -6,7 +6,7 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>edu.dsc</groupId>
-    <artifactId>batch-scheduler</artifactId>
+    <artifactId>hdfs-auto-tiering</artifactId>
     <version>0.1.0-SNAPSHOT</version>
     <packaging>jar</packaging>
 
@@ -98,6 +98,7 @@
     </dependencies>
 
     <build>
+        <finalName>hdfs-auto-tiering</finalName>
         <!-- 공유 DDL(db/migrations) 을 테스트 classpath 에 노출 -->
         <testResources>
             <testResource>

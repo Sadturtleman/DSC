@@ -19,7 +19,7 @@ import java.util.List;
 /**
  * HDFS 블록의 실제 스토리지 타입을 조회해 목표 정책 충족 여부를 반환한다.
  *
- * <p>batch-scheduler 의 {@code HdfsApiCaller} 와 같은 {@code hdfs/} 패키지에 위치.
+ * <p>hdfs-auto-tiering 의 {@code HdfsApiCaller} 와 같은 {@code hdfs/} 패키지에 위치.
  * HdfsApiCaller 가 정책 변경·SPS 호출을 담당하고,
  * HdfsPolicyChecker 는 이동 완료 여부 검증만 담당한다.
  *
