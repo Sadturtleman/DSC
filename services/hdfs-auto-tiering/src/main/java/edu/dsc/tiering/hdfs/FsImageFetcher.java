@@ -128,6 +128,7 @@ public class FsImageFetcher implements AutoCloseable {
             int currentPolicy = 0;
             
             long dirParentId = 0;
+            List<Long> currentChildren = new ArrayList<>();
 
             while (xsr.hasNext()) {
                 int event = xsr.next();
@@ -142,6 +143,11 @@ public class FsImageFetcher implements AutoCloseable {
                     } else if ("directory".equals(currentTag)) {
                         inDirectory = true;
                         dirParentId = 0;
+                        currentChildren.clear();
+                        String pAttr = xsr.getAttributeValue(null, "parent");
+                        if (pAttr != null && !pAttr.isEmpty()) {
+                            dirParentId = Long.parseLong(pAttr);
+                        }
                     }
                 } else if (event == XMLStreamConstants.CHARACTERS) {
                     String text = xsr.getText().trim();
@@ -152,7 +158,7 @@ public class FsImageFetcher implements AutoCloseable {
                             case "id": currentId = Long.parseLong(text); break;
                             case "type": currentType = text; break;
                             case "name": currentName = text; break;
-                            case "fileSize": currentSize = Long.parseLong(text); break;
+                            case "numBytes": currentSize += Long.parseLong(text); break;
                             case "atime": currentAtime = Long.parseLong(text); break;
                             case "mtime": currentMtime = Long.parseLong(text); break;
                             case "storagePolicy": currentPolicy = Integer.parseInt(text); break;
@@ -161,8 +167,7 @@ public class FsImageFetcher implements AutoCloseable {
                         if ("parent".equals(currentTag)) {
                             dirParentId = Long.parseLong(text);
                         } else if ("child".equals(currentTag) || "inode".equals(currentTag)) {
-                            long childId = Long.parseLong(text);
-                            childToParent.put(childId, dirParentId);
+                            currentChildren.add(Long.parseLong(text));
                         }
                     }
                 } else if (event == XMLStreamConstants.END_ELEMENT) {
@@ -171,6 +176,9 @@ public class FsImageFetcher implements AutoCloseable {
                         inodes.put(currentId, new InodeRecord(currentId, currentType, currentName, currentSize, currentAtime, currentMtime, currentPolicy));
                         inInode = false;
                     } else if ("directory".equals(endTag)) {
+                        for (long childId : currentChildren) {
+                            childToParent.put(childId, dirParentId);
+                        }
                         inDirectory = false;
                     }
                     currentTag = null;
