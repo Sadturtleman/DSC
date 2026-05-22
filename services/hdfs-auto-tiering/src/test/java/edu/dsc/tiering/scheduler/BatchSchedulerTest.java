@@ -40,7 +40,7 @@ class BatchSchedulerTest {
     void setUp() {
         AppConfig.Scheduler cfg = new AppConfig.Scheduler(
                 10,
-                List.of(new AppConfig.Scheduler.Window("test", "00:00", "00:00", 100, 100)),
+                List.of(new AppConfig.Scheduler.Window("test", "00:00", "00:00", 100, 100L)),
                 2,
                 3
         );

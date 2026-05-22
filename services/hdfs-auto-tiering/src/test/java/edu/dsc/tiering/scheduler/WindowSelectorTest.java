@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class WindowSelectorTest {
 
     private static Window window(String name, String start, String end) {
-        return new Window(name, start, end, 1, 1);
+        return new Window(name, start, end, 1, 1L);
     }
 
     @Test
