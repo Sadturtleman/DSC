@@ -57,6 +57,8 @@
   * **상황**: YARN에 올라간 데몬 컨테이너가 정상적으로 실행(`STABLE`, `RUNNING`)되고 있는지 확인할 때 사용합니다.
 * **서비스 컨테이너 로그 확인**: `yarn logs -applicationId <application_id>`
   * **상황**: 데몬 프로세스 내에서 에러가 발생했거나, YARN 서비스 기동이 실패했을 때 디버깅 목적으로 상세 로그를 조회할 때 사용합니다.
+* **External SPS 데몬 로그 실시간 확인**: `tail -f ~/hadoop-logs/sps/hadoop-$(whoami)-sps-$(hostname).log`
+  * **상황**: HDFS 데몬인 SPS가 HDFS 내부에서 블록을 스토리지 정책에 맞게 물리적으로 이동시키는 과정 중 발생하는 로그나 에러(Drop, Timeout 등)를 실시간으로 추적할 때 사용합니다.
 
 ### 0.3 데이터베이스 (PostgreSQL) 제어
 * **PostgreSQL 서비스 기동**: `sudo service postgresql start`
@@ -565,6 +567,30 @@ cat > ~/hadoop-conf/namenode/hdfs-site.xml << 'EOF'
   <property>
     <name>dfs.storage.policy.satisfier.mode</name>
     <value>external</value>
+  </property>
+
+  <!-- SPS 재시도 횟수 제한 해제 (기본 3 -> 100) : 3번 실패 시 포기 방지 -->
+  <property>
+    <name>dfs.storage.policy.satisfier.retry.max.attempts</name>
+    <value>100</value>
+  </property>
+
+  <!-- SPS 대기 시간 단축 (기본 60000ms -> 3000ms) : 1분 대기 방지 -->
+  <property>
+    <name>dfs.storage.policy.satisfier.recheck.timeout.millis</name>
+    <value>3000</value>
+  </property>
+
+  <!-- NameNode 동시 블록 이동 허용량 대폭 증가 (기본 2 -> 20) -->
+  <property>
+    <name>dfs.namenode.replication.max-streams</name>
+    <value>20</value>
+  </property>
+
+  <!-- NameNode 동시 블록 이동 하드 리미트 증가 (기본 4 -> 40) -->
+  <property>
+    <name>dfs.namenode.replication.max-streams-hard-limit</name>
+    <value>40</value>
   </property>
 
   <!-- NameNode Web UI -->
@@ -1111,6 +1137,11 @@ if ! jps | grep -q NodeManager; then
 fi
 
 echo "=== External SPS 기동 ==="
+echo "  -> NameNode Safe Mode 해제 대기 중..."
+HADOOP_CONF_DIR=$HOME/hadoop-conf/namenode hdfs dfsadmin -safemode wait
+jps | grep -i 'StoragePolicySatisfier' | awk '{print $1}' | xargs kill -9 2>/dev/null || true
+# 이전에 비정상 종료로 인해 HDFS에 남아있는 모든 잠금 파일(lock) 강제 삭제 (SPS, Balancer 등)
+HADOOP_CONF_DIR=$HOME/hadoop-conf/namenode hdfs dfs -rm -f /system/*.id 2>/dev/null || true
 HADOOP_CONF_DIR=$HOME/hadoop-conf/sps hdfs --daemon start sps 2>/dev/null || \
   echo "[WARN] SPS 기동 실패 (hdfs-site.xml external 모드 설정 확인 필요)"
 sleep 3
@@ -1679,7 +1710,7 @@ SCRIPT
 chmod +x ~/deploy-auto-tiering.sh
 ```
 
-### 18-10. E2E 검증 테스트 자동화 스크립트
+### 18-11. E2E 검증 테스트 자동화 스크립트
 
 HDFS 파일 업로드, 정책 적용, FSImage 기반 ScoringEngine 적재, 스케줄러 기동 및 블록 이동 완료까지 자동 검증 후 생성된 테스트 데이터를 삭제(원상 복구)하는 스크립트이다.
 배포 스크립트를 통해 HDFS에 업로드된 JAR 파일을 가져와 테스트를 진행한다.
@@ -1699,7 +1730,7 @@ CONFIG_FILE="$HOME/hdfs-auto-tiering-config.yaml"
 JAR_FILE="/tmp/hdfs-auto-tiering-e2e-test.jar"
 
 cleanup() {
-    echo "=== 테스트 환경 정리 ==="
+    echo "[단계] 테스트 환경 정리"
     if [ -n "$SCHEDULER_PID" ] && kill -0 "$SCHEDULER_PID" 2>/dev/null; then
         kill "$SCHEDULER_PID" 2>/dev/null || true
     fi
@@ -1710,30 +1741,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== 사전 점검 및 JAR/Config 준비 ==="
+echo "[단계] 사전 점검 및 JAR/설정 파일 준비"
 HDFS_CONFIG_PATH="/apps/hdfs-auto-tiering/config/hdfs-auto-tiering-config.yaml"
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo "로컬 설정 파일이 없어 HDFS에서 다운로드합니다..."
+    echo " > HDFS에서 설정 파일 다운로드 중..."
     hdfs dfs -copyToLocal -f "$HDFS_CONFIG_PATH" "$CONFIG_FILE" 2>/dev/null || true
 fi
 
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo "설정 파일 누락: HDFS($HDFS_CONFIG_PATH)와 로컬($CONFIG_FILE) 모두 존재하지 않습니다."
-    echo "INFRA.md 문서의 18-2장을 다시 수행하여 설정 파일을 생성해 주십시오."
+    echo "[오류] HDFS 및 로컬에 설정 파일이 없습니다."
     exit 1
 fi
 
-echo "배포된 HDFS 경로에서 JAR 파일 가져오기..."
+echo " > HDFS 배포 경로에서 JAR 파일 가져오기..."
 HDFS_JAR_PATH="/apps/hdfs-auto-tiering/lib/hdfs-auto-tiering.jar"
 hdfs dfs -copyToLocal -f "$HDFS_JAR_PATH" "$JAR_FILE" 2>/dev/null || true
 
 if [ ! -f "$JAR_FILE" ]; then
-    echo "JAR 파일 가져오기 실패: HDFS 경로($HDFS_JAR_PATH)에 파일이 존재하지 않습니다."
-    echo "먼저 ~/deploy-auto-tiering.sh 스크립트를 통해 배포를 완료해야 합니다."
+    echo "[오류] JAR 파일 가져오기 실패. 먼저 deploy-auto-tiering.sh를 통해 배포하십시오."
     exit 1
 fi
 
-echo "=== 테스트 1: 파일 업로드 및 ALL_SSD 정책 적용 ==="
+echo "[1단계] 파일 업로드 및 ALL_SSD 정책 적용"
+echo " > 기대 효과: 고성능 SSD 티어에 초기 데이터 배치"
 dd if=/dev/urandom of="$LOCAL_TMP" bs=1M count=10 2>/dev/null
 hdfs dfs -mkdir -p "$TEST_DIR"
 hdfs storagepolicies -setStoragePolicy -path "$TEST_DIR" -policy ALL_SSD > /dev/null
@@ -1742,23 +1772,23 @@ hdfs storagepolicies -setStoragePolicy -path "$TEST_FILE" -policy ALL_SSD > /dev
 hdfs storagepolicies -satisfyStoragePolicy -path "$TEST_FILE" > /dev/null 2>&1 || true
 sleep 5
 
-echo "=== 테스트 2: 블록 SSD 배치 확인 ==="
+echo "[2단계] 초기 SSD 블록 위치 검증"
 FSCK_BEFORE=$(hdfs fsck "$TEST_FILE" -files -blocks -locations 2>/dev/null)
 if ! echo "$FSCK_BEFORE" | grep -E -q "9867|9866"; then
-    echo "SSD 블록 위치 확인 실패"
+    echo "[오류] SSD 블록 위치 확인 실패."
     exit 1
 fi
-echo "확인 성공"
+echo " > SSD 배치 확인 완료."
 
-echo "=== 테스트 3: FSImage 동기화 및 ScoringEngine 후보 생성 준비 (HOT->COLD) ==="
+echo "[3단계] FSImage 동기화 및 메타데이터 오프로딩"
+echo " > 목적: NameNode RPC 부하 없이 오프라인으로 메타데이터 분석"
 OLD_ATIME=$(date -d '120 days ago' +%Y%m%d:%H%M%S)
 hdfs dfs -touch -a -t "$OLD_ATIME" "$TEST_FILE"
 hdfs dfsadmin -safemode enter >/dev/null
 hdfs dfsadmin -saveNamespace >/dev/null
 hdfs dfsadmin -safemode leave >/dev/null
 
-echo "=== 테스트 4: Batch Scheduler 기동 ==="
-# 원래는 로그를 버렸지만( /dev/null ), 디버깅을 위해 임시 파일로 남기도록 수정
+echo "[4단계] 자동 이관을 위한 배치 스케줄러 기동"
 java -jar "$JAR_FILE" "$CONFIG_FILE" > /tmp/tiering-test.log 2>&1 &
 SCHEDULER_PID=$!
 
@@ -1771,30 +1801,31 @@ for i in $(seq 1 60); do
         DISPATCHED="yes"
         break
     fi
-    echo "대기 중... 현재 상태: $STATUS"
+    echo " > 대기 중... 현재 상태: $STATUS"
 done
 
 if [ "$DISPATCHED" = "no" ]; then
-    echo "작업 처리 실패! Java 데몬 에러 로그:"
+    echo "[오류] 작업 처리 실패. Java 데몬 에러 로그:"
     cat /tmp/tiering-test.log
     exit 1
 fi
-echo "상태 전이 성공: $STATUS"
+echo " > 상태 전이 성공: $STATUS"
 
 if kill -0 "$SCHEDULER_PID" 2>/dev/null; then
     kill "$SCHEDULER_PID" 2>/dev/null || true
 fi
 SCHEDULER_PID=""
 
-echo "=== 테스트 5: External SPS 동작 확인 ==="
+echo "[5단계] External SPS를 통한 물리적 블록 이동 검증"
+echo " > 목적: 비용 효율적인 ARCHIVE 티어로의 물리적 블록 마이그레이션 확인"
 sleep 45
 FSCK_AFTER=$(hdfs fsck "$TEST_FILE" -files -blocks -locations 2>/dev/null)
 if ! echo "$FSCK_AFTER" | grep -E -q "9887|9886"; then
-    echo "ARCHIVE 이동 확인 실패. SPS 로그 확인 요망."
+    echo "[오류] ARCHIVE 블록 위치 확인 실패."
     exit 1
 fi
-echo "ARCHIVE 이동 성공"
-echo "=== 모든 테스트 성공 ==="
+echo " > ARCHIVE 마이그레이션 확인 완료."
+echo "[결과] 전체 E2E 테스트가 성공적으로 완료되었습니다."
 exit 0
 SCRIPT
 
@@ -1981,11 +2012,12 @@ LOCAL_TMP_DIR="/tmp/tiering_scenario_data"
 HDFS_TEST_DIR="/test/scenario_e2e"
 
 # 스크립트 강제 종료(Ctrl+C) 시에도 반드시 쓰레기 데이터를 삭제하도록 trap 설정
-trap 'echo -e "\n🧹 [긴급 정리] 강제 종료 감지. 물리적 쓰레기 데이터를 정리합니다..."; rm -rf "$LOCAL_TMP_DIR" 2>/dev/null; hdfs dfs -rm -r -skipTrash "$HDFS_TEST_DIR" 2>/dev/null || true' INT TERM EXIT
+trap 'echo -e "\n[시스템] 종료 신호 감지. 물리적 테스트 데이터를 정리합니다..."; rm -rf "$LOCAL_TMP_DIR" 2>/dev/null; hdfs dfs -rm -r -skipTrash "$HDFS_TEST_DIR" 2>/dev/null || true' INT TERM EXIT
 
 if [ "$SCENARIO" != "CURRENT" ]; then
     echo "=========================================================="
-    echo "🛠 [실물 스케일 시나리오 ${SCENARIO}] 기가바이트(GB) 단위 물리 파일 생성 및 이관 테스트 시작"
+    echo "[시나리오 ${SCENARIO}] HDFS 자동 티어링 데이터 이동 테스트"
+    echo "목적: NameNode 메타데이터 스캔 오프로딩 및 블록 배치 최적화"
     mkdir -p "$LOCAL_TMP_DIR"
     hdfs dfs -rm -r -skipTrash "$HDFS_TEST_DIR" 2>/dev/null || true
     hdfs dfs -mkdir -p "$HDFS_TEST_DIR"
@@ -1995,7 +2027,7 @@ if [ "$SCENARIO" != "CURRENT" ]; then
     COLD_ATIME=$(date -d '200 days ago' +%Y%m%d:%H%M%S)
 
     if [ "$SCENARIO" == "A" ]; then
-        echo "- 로그 데이터 2GB 생성 (1GB는 100일 전 접근으로 위장하여 COLD 유도) ..."
+        echo " - 2GB 로그 데이터 생성 중 (1GB HOT, 1GB COLD) ..."
         dd if=/dev/zero of="${LOCAL_TMP_DIR}/log_hot.dat" bs=1M count=1024 2>/dev/null
         dd if=/dev/zero of="${LOCAL_TMP_DIR}/log_cold.dat" bs=1M count=1024 2>/dev/null
         hdfs dfs -put -f "${LOCAL_TMP_DIR}/log_hot.dat" "$HDFS_TEST_DIR/"
@@ -2009,7 +2041,7 @@ if [ "$SCENARIO" != "CURRENT" ]; then
         hdfs dfs -touch -a -t "$COLD_ATIME" "${HDFS_TEST_DIR}/log_cold.dat"
 
     elif [ "$SCENARIO" == "B" ]; then
-        echo "- 머신러닝 데이터 3GB 생성 (WARM 1GB, COLD 1GB 위장) ..."
+        echo " - 3GB ML 데이터 레이크 데이터 생성 중 (HOT/WARM/COLD) ..."
         dd if=/dev/zero of="${LOCAL_TMP_DIR}/ml_hot.dat" bs=1M count=1024 2>/dev/null
         dd if=/dev/zero of="${LOCAL_TMP_DIR}/ml_warm.dat" bs=1M count=1024 2>/dev/null
         dd if=/dev/zero of="${LOCAL_TMP_DIR}/ml_cold.dat" bs=1M count=1024 2>/dev/null
@@ -2029,7 +2061,7 @@ if [ "$SCENARIO" != "CURRENT" ]; then
         hdfs dfs -touch -a -t "$COLD_ATIME" "${HDFS_TEST_DIR}/ml_cold.dat"
 
     elif [ "$SCENARIO" == "C" ]; then
-        echo "- 컴플라이언스 아카이빙 5GB 생성 (전부 COLD 위장) ..."
+        echo " - 5GB 컴플라이언스 아카이브 데이터 생성 중 (전체 COLD) ..."
         for i in {1..5}; do
             dd if=/dev/zero of="${LOCAL_TMP_DIR}/comp_${i}.dat" bs=1M count=1024 2>/dev/null
             hdfs dfs -put -f "${LOCAL_TMP_DIR}/comp_${i}.dat" "$HDFS_TEST_DIR/"
@@ -2038,16 +2070,16 @@ if [ "$SCENARIO" != "CURRENT" ]; then
             hdfs dfs -touch -a -t "$COLD_ATIME" "${HDFS_TEST_DIR}/comp_${i}.dat"
         done
     else
-        echo "올바르지 않은 시나리오입니다. (A, B, C 중 택 1)"
+        echo "[오류] 잘못된 시나리오가 선택되었습니다. (A, B, C 중 택 1)"
         exit 1
     fi
 
-    echo "- NameNode FSImage를 강제 동기화하여 ScoringEngine이 실제 메타데이터를 읽도록 합니다..."
+    echo " - 오프라인 스코어링 엔진을 위한 NameNode FSImage 동기화 중..."
     hdfs dfsadmin -safemode enter >/dev/null
     hdfs dfsadmin -saveNamespace >/dev/null
     hdfs dfsadmin -safemode leave >/dev/null
 
-    echo "- 데몬 강제 재기동하여 이관 트리거 (처음부터 끝까지 파이프라인 수행)..."
+    echo " - 파이프라인 실행을 위한 Java 데몬 트리거 중..."
     # 기존에 돌고 있던 Java 데몬 프로세스 종료 (YARN이 아닌 로컬 데몬 기준)
     kill $(pgrep -f hdfs-auto-tiering.jar) 2>/dev/null || true
     sleep 2
@@ -2056,7 +2088,7 @@ if [ "$SCENARIO" != "CURRENT" ]; then
     CONFIG_FILE="$HOME/hdfs-auto-tiering-config-test.yaml"
     hdfs dfs -copyToLocal -f "/apps/hdfs-auto-tiering/lib/hdfs-auto-tiering.jar" "$JAR_FILE" 2>/dev/null
     if [ ! -f "$JAR_FILE" ]; then
-        echo "JAR 파일 가져오기 실패: /apps/hdfs-auto-tiering/lib/hdfs-auto-tiering.jar 를 먼저 배포해야 합니다."
+        echo "[오류] JAR 파일을 찾을 수 없습니다. 먼저 /apps/hdfs-auto-tiering/lib/hdfs-auto-tiering.jar 배포를 진행해야 합니다."
         exit 1
     fi
 
@@ -2123,31 +2155,31 @@ CFG
         # 화면 전체를 지우고(clear) 새로 그려 터미널 깨짐 방지
         clear
         echo "=========================================================="
-        echo "🚀 [Live] Auto-Tiering 파이프라인 실시간 시각화 대시보드"
+        echo "[라이브 모니터] HDFS 자동 티어링 파이프라인 상태"
         echo "=========================================================="
-        printf "📊 전체 큐 상태 (대기 한도: %ds)\n" "$((i*2))"
-        printf " ⏳ 대기 중 (PENDING)    : %d\n" "$PENDING_COUNT"
-        printf " 🏃 이관 중 (DISPATCHED) : %d\n" "$DISPATCHED_COUNT"
-        printf " 🔎 확인 중 (IN_PROGRESS): %d\n" "$IN_PROGRESS_COUNT"
-        printf " ✅ 완료됨  (COMPLETED)  : %d / %d\n" "$COMPLETED_COUNT" "$TARGET_COMPLETED"
-        printf " ❌ 실패함  (FAILED)     : %d\n" "$FAILED_COUNT"
+        printf "[큐 상태] 타임아웃 제한: %ds\n" "$((i*2))"
+        printf " - PENDING    : %d\n" "$PENDING_COUNT"
+        printf " - DISPATCHED : %d\n" "$DISPATCHED_COUNT"
+        printf " - IN_PROGRESS: %d\n" "$IN_PROGRESS_COUNT"
+        printf " - COMPLETED  : %d / %d\n" "$COMPLETED_COUNT" "$TARGET_COMPLETED"
+        printf " - FAILED     : %d\n" "$FAILED_COUNT"
         echo "----------------------------------------------------------"
         # 백그라운드 프로세스가 죽었는지 확인
         if ! kill -0 "$DAEMON_PID" 2>/dev/null; then
-            echo "❌ 치명적 오류: 백그라운드 Java 데몬이 비정상 종료되었습니다!"
-            echo "--- [/tmp/tiering-scenario.log 출력] ---"
+            echo "[오류] 백그라운드 Java 데몬이 예기치 않게 종료되었습니다."
+            echo "--- [/tmp/tiering-scenario.log] ---"
             cat /tmp/tiering-scenario.log
             echo "----------------------------------------"
             break
         fi
 
         if [ -n "$DISPATCHED_FILES" ]; then
-            echo "🔥 현재 물리 이동 중인 파일 (HDFS 실시간):"
-            echo "$DISPATCHED_FILES" | sed 's/|/ ===> /g' | sed 's/^/   - /'
+            echo "[동작] 물리적 블록 이동 진행 중:"
+            echo "$DISPATCHED_FILES" | sed 's/|/ -> /g' | sed 's/^/   - /'
         elif [ "$COMPLETED_COUNT" -lt "$TARGET_COMPLETED" ]; then
-            echo "📡 Scheduler/Tracker 상태 전이 대기 중..."
+            echo "[상태] 스케줄러/트래커 상태 전이 대기 중..."
         else
-            echo "✨ 모든 이관 파이프라인이 성공적으로 완료되었습니다!"
+            echo "[상태] 모든 티어링 파이프라인이 성공적으로 완료되었습니다."
         fi
 
         if [ "$COMPLETED_COUNT" -eq "$TARGET_COMPLETED" ]; then
@@ -2162,16 +2194,17 @@ CFG
     rm -rf "$LOCAL_TMP_DIR"
 
     if [ "${SUCCESS_FLAG:-0}" -eq 1 ]; then
-        echo "- 파이프라인 전체 구동 및 이관 처리 완료!"
+        echo "[시스템] 파이프라인 실행 및 데이터 티어링 완료."
     else
-        echo "- ⚠️ 이관 처리가 완료되지 않고 스크립트가 종료되었습니다. (타임아웃 또는 데몬 에러)"
-        echo "로그 파일 확인 요망: cat /tmp/tiering-scenario.log"
+        echo "[경고] 모든 티어링 작업을 완료하기 전에 스크립트가 종료되었습니다 (타임아웃 또는 에러)."
+        echo "로그를 확인하십시오: cat /tmp/tiering-scenario.log"
         cat /tmp/tiering-scenario.log | grep -E 'Exception|Error|Fail' || true
     fi
 fi
 
 echo "=========================================================="
-echo "📊 HDFS Auto-Tiering 비용 절감 및 스토리지 최적화 리포트"
+echo "HDFS 자동 티어링 스토리지 최적화 및 비용 리포트"
+echo "자동화된 블록 배치를 통한 스토리지 비용 절감 지표 검증"
 echo "=========================================================="
 
 # 1. 누적 처리량 (HOT -> COLD) 및 (HOT -> WARM) 바이트
@@ -2186,9 +2219,9 @@ HOT_TO_WARM_BYTES=$($PSQL_CMD -c "SELECT COALESCE(SUM(file_size_bytes), 0) FROM 
 HOT_TO_COLD_GB=$(awk "BEGIN {print $HOT_TO_COLD_BYTES / 1024 / 1024 / 1024}")
 HOT_TO_WARM_GB=$(awk "BEGIN {print $HOT_TO_WARM_BYTES / 1024 / 1024 / 1024}")
 
-echo "[✅ 데이터 이관 실적 (누적 GB)]"
-printf -- "- HOT(gp3) -> COLD(sc1) 이관량: %.2f GB\n" "$HOT_TO_COLD_GB"
-printf -- "- HOT(gp3) -> WARM(st1) 이관량: %.2f GB\n" "$HOT_TO_WARM_GB"
+echo "[데이터 티어링 지표 (누적 GB)]"
+printf -- " - HOT(gp3) -> COLD(sc1): %.2f GB\n" "$HOT_TO_COLD_GB"
+printf -- " - HOT(gp3) -> WARM(st1): %.2f GB\n" "$HOT_TO_WARM_GB"
 
 # 비용 절감액 계산 (월간 GB당 절감액: COLD 이관 시 $0.065, WARM 이관 시 $0.035 절감)
 SAVINGS_COLD=$(awk "BEGIN {printf \"%.2f\", $HOT_TO_COLD_GB * 0.065}")
@@ -2196,15 +2229,15 @@ SAVINGS_WARM=$(awk "BEGIN {printf \"%.2f\", $HOT_TO_WARM_GB * 0.035}")
 TOTAL_SAVINGS=$(awk "BEGIN {printf \"%.2f\", $SAVINGS_COLD + $SAVINGS_WARM}")
 
 echo ""
-echo "[💰 월간 클라우드 스토리지 비용 절감액 (AWS EBS 기준)]"
-echo "- 비싼 SSD 대신 ARCHIVE(sc1)를 활용한 절감액: \$${SAVINGS_COLD} / 월"
-echo "- 비싼 SSD 대신 DISK(st1)를 활용한 절감액: \$${SAVINGS_WARM} / 월"
+echo "[스토리지 비용 절감액 (예상 월간, AWS EBS 벤치마크)]"
+echo " - ARCHIVE(sc1) 도입에 따른 절감액: 월 \$${SAVINGS_COLD}"
+echo " - DISK(st1) 도입에 따른 절감액   : 월 \$${SAVINGS_WARM}"
 echo "----------------------------------------------------------"
-echo "▶ 총 절감액: \$${TOTAL_SAVINGS} / 월"
+echo " > 총 비용 절감액: 월 \$${TOTAL_SAVINGS}"
 echo "=========================================================="
 
 if [ "$SCENARIO" != "CURRENT" ]; then
-    echo "🧹 물리적 시나리오 테스트 데이터 정리 완료."
+    echo "[시스템] 물리적 시나리오 테스트 데이터 정리 완료."
     $PSQL_CMD -c "DELETE FROM pending_jobs WHERE file_path LIKE '${HDFS_TEST_DIR}%';" > /dev/null 2>&1
     hdfs dfs -rm -r -skipTrash "$HDFS_TEST_DIR" 2>/dev/null || true
 fi
