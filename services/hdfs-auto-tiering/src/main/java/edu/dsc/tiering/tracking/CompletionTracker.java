@@ -97,9 +97,19 @@ public class CompletionTracker implements Runnable {
                 Duration elapsed = Duration.between(
                         job.dispatchedAt(), java.time.OffsetDateTime.now());
                 if (elapsed.toMinutes() >= cfg.timeoutMinutes()) {
-                    repo.markFailed(job.jobId());
-                    log.warn("TIMEOUT id={} path={} elapsed={}min",
-                            job.jobId(), job.filePath(), elapsed.toMinutes());
+                    int retryCount = repo.getRetryCount(job.id());
+                    if (retryCount < cfg.maxRetryCount()) {
+                        // 재시도 : pending으로 복귀
+                        repo.markFailed(job.jobId());
+                        log.warn("TIMEOUT id={} path={} elapsed={}min",
+                                job.jobId(), job.filePath(), elapsed.toMinutes());
+                    }
+                    else{
+                        // 재시도 횟수 초과
+                        repo.markFailedPermanently(job.id());
+                        log.error("TIMEOUT→FAILED(permanent) id={} path={} attempts={}",
+                                job.id(), job.filePath(), retryCount);
+                    }
                     continue;
                 }
 
@@ -115,6 +125,8 @@ public class CompletionTracker implements Runnable {
                     log.warn("HDFS check timed out id={} path={}", job.jobId(), job.filePath());
                     continue;
                 }
+
+
 
                 boolean done;
                 try {

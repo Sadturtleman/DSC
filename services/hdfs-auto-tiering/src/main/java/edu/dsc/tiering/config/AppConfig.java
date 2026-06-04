@@ -214,6 +214,7 @@ public final class AppConfig {
         private final double completionRatio;
         private final int maxWorkers;
         private final int nodenameSemaphore;
+        int    maxRetryCount        // ← 추가: 기본값 5
 
         @JsonCreator
         public TrackerSettings(@JsonProperty("pollIntervalSeconds")

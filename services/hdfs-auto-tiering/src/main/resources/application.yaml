@@ -46,3 +46,4 @@ tracker:
   completion-ratio: 0.95
   max-workers: 5
   nodename-semaphore: 3
+  max-retry-count: 5  # 타임아웃 재시도 로직
