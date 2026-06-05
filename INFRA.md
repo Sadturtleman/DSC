@@ -1436,8 +1436,7 @@ scoring:
   weightFileSize: 0.5
   localFsimageDir: /tmp/hdfs-auto-tiering-fsimage
   targetDirectories:
-    - /test/auto-tiering-e2e
-    - /test/scenario_e2e
+    - /test/metric
 
 scheduler:
   pollIntervalSeconds: 10
@@ -1465,7 +1464,7 @@ tracker:
 EOF
 ```
 
-`targetDirectories`는 ScoringEngine이 처리할 HDFS 경로 화이트리스트다. 위 인프라 문서의 E2E/비용 검증 스크립트가 생성하는 `/test/auto-tiering-e2e`, `/test/scenario_e2e`가 빠지면 job이 생성되지 않아 테스트가 `NOT_CREATED` 상태로 대기한다.
+`targetDirectories`는 ScoringEngine이 처리할 HDFS 경로 화이트리스트다. 위 인프라 문서의 E2E/비용 검증 스크립트는 `/test/metric` 하위에 테스트 데이터를 생성하므로, `/test/metric`이 빠지면 job이 생성되지 않아 테스트가 `NOT_CREATED` 상태로 대기한다.
 
 ### 18-3. YARN Service Framework 동작 사전 검증
 
@@ -1728,7 +1727,7 @@ set -uo pipefail
 
 export HADOOP_CONF_DIR="$HOME/hadoop-conf/namenode"
 PSQL_CMD="psql -h localhost -U dsc -d dsc_tiering -qtA"
-TEST_DIR="/test/auto-tiering-e2e"
+TEST_DIR="/test/metric/auto-tiering-e2e"
 TEST_FILE="${TEST_DIR}/testfile.dat"
 LOCAL_TMP="/tmp/auto-tiering-e2e-testfile.dat"
 SCHEDULER_PID=""
@@ -2015,7 +2014,7 @@ export HADOOP_HOME="$HOME/hadoop"
 PSQL_CMD="psql -h localhost -U dsc -d dsc_tiering -qtA"
 SCENARIO=${1:-"CURRENT"}
 LOCAL_TMP_DIR="/tmp/tiering_scenario_data"
-HDFS_TEST_DIR="/test/scenario_e2e"
+HDFS_TEST_DIR="/test/metric/scenario_e2e"
 
 # 스크립트 강제 종료(Ctrl+C) 시에도 반드시 쓰레기 데이터를 삭제하도록 trap 설정
 trap 'echo -e "\n[시스템] 종료 신호 감지. 물리적 테스트 데이터를 정리합니다..."; rm -rf "$LOCAL_TMP_DIR" 2>/dev/null; hdfs dfs -rm -r -skipTrash "$HDFS_TEST_DIR" 2>/dev/null || true' INT TERM EXIT
@@ -2120,7 +2119,7 @@ scoring:
   weightFileSize: 0.5
   localFsimageDir: /tmp/hdfs-auto-tiering-fsimage
   targetDirectories:
-    - /test/scenario_e2e
+    - /test/metric
 scheduler:
   pollIntervalSeconds: 10
   windows:

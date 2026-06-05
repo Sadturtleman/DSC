@@ -60,7 +60,7 @@ edu.dsc.tiering
 참고. **scoring engine 과 completion tracker 담당자는 본 문서를 보고 자기 컴포넌트를
 이 계약에 맞춰 구현하면 된다.**
 
-`scoring.target-directories`는 스코어링 권한 범위를 제한하는 화이트리스트다. 값이 없으면 `ScoringEngine`은 FSImage 수집 자체를 건너뛰고 아무 job도 만들지 않는다. INFRA.md의 검증 설정에는 테스트 데이터 경로(`/test/auto-tiering-e2e`, `/test/scenario_e2e`)를 반드시 포함한다.
+`scoring.target-directories`는 스코어링 권한 범위를 제한하는 화이트리스트다. 값이 없으면 `ScoringEngine`은 FSImage 수집 자체를 건너뛰고 아무 job도 만들지 않는다. 검증 설정에는 테스트 데이터 루트인 `/test/metric`을 반드시 포함한다.
 
 ## 테스트
 
@@ -113,12 +113,12 @@ mvn test
 
 # 3) 실제 HDFS 파일을 만들고 FSImage 저장
 dd if=/dev/zero of=/tmp/tiering-sample.bin bs=1M count=128
-hdfs dfs -mkdir -p /test/auto-tiering-e2e
-hdfs storagepolicies -setStoragePolicy -path /test/auto-tiering-e2e -policy ALL_SSD
-hdfs dfs -put -f /tmp/tiering-sample.bin /test/auto-tiering-e2e/sample.bin
-hdfs storagepolicies -setStoragePolicy -path /test/auto-tiering-e2e/sample.bin -policy ALL_SSD
-hdfs storagepolicies -satisfyStoragePolicy -path /test/auto-tiering-e2e/sample.bin
-hdfs dfs -touch -a -t "$(date -d '120 days ago' +%Y%m%d:%H%M%S)" /test/auto-tiering-e2e/sample.bin
+hdfs dfs -mkdir -p /test/metric/auto-tiering-e2e
+hdfs storagepolicies -setStoragePolicy -path /test/metric/auto-tiering-e2e -policy ALL_SSD
+hdfs dfs -put -f /tmp/tiering-sample.bin /test/metric/auto-tiering-e2e/sample.bin
+hdfs storagepolicies -setStoragePolicy -path /test/metric/auto-tiering-e2e/sample.bin -policy ALL_SSD
+hdfs storagepolicies -satisfyStoragePolicy -path /test/metric/auto-tiering-e2e/sample.bin
+hdfs dfs -touch -a -t "$(date -d '120 days ago' +%Y%m%d:%H%M%S)" /test/metric/auto-tiering-e2e/sample.bin
 hdfs dfsadmin -safemode enter
 hdfs dfsadmin -saveNamespace
 hdfs dfsadmin -safemode leave
@@ -131,7 +131,7 @@ DAEMON_PID=$!
 psql -h localhost -U dsc -d dsc_tiering -c \
     "SELECT job_id, file_path, status, current_tier, target_tier
        FROM pending_jobs
-      WHERE file_path = '/test/auto-tiering-e2e/sample.bin'
+      WHERE file_path = '/test/metric/auto-tiering-e2e/sample.bin'
       ORDER BY job_id DESC LIMIT 1;"
 kill "$DAEMON_PID"
 ```

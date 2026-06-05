@@ -60,20 +60,20 @@ class ScoringEngineTest {
     @Test
     void targetDirectoryWhitelistKeepsOnlyConfiguredSubtrees() {
         ScoringEngine scopedEngine = new ScoringEngine(null, rule, null, 1L,
-                List.of("/test/auto-tiering-e2e", "/test/scenario_e2e/"));
+                List.of("/test/metric/"));
 
         List<String> paths = scopedEngine.filterTargetFiles(List.of(
-                file("/test/auto-tiering-e2e/sample.dat", 100, 120, 12),
-                file("/test/scenario_e2e/app.log", 100, 120, 12),
-                file("/test/auto-tiering-e2e-backup/sample.dat", 100, 120, 12),
+                file("/test/metric/auto-tiering-e2e/sample.dat", 100, 120, 12),
+                file("/test/metric/scenario_e2e/app.log", 100, 120, 12),
+                file("/test/metric-backup/sample.dat", 100, 120, 12),
                 file("/tmp/other.dat", 100, 120, 12)))
                 .stream()
                 .map(FileMetadata::path)
                 .collect(Collectors.toList());
 
         assertEquals(List.of(
-                "/test/auto-tiering-e2e/sample.dat",
-                "/test/scenario_e2e/app.log"), paths);
+                "/test/metric/auto-tiering-e2e/sample.dat",
+                "/test/metric/scenario_e2e/app.log"), paths);
     }
 
     @Test
@@ -81,7 +81,7 @@ class ScoringEngineTest {
         ScoringEngine scopedEngine = new ScoringEngine(null, rule, null, 1L, List.of());
 
         assertTrue(scopedEngine.filterTargetFiles(List.of(
-                file("/test/auto-tiering-e2e/sample.dat", 100, 120, 12))).isEmpty());
+                file("/test/metric/sample.dat", 100, 120, 12))).isEmpty());
     }
 
     private FileMetadata file(String path, long size, long daysAgo, int storagePolicy) {

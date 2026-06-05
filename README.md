@@ -83,8 +83,7 @@ scoring:
   weight-file-size: 0.5
   local-fsimage-dir: /tmp/hdfs-auto-tiering-fsimage
   target-directories:
-    - /test/auto-tiering-e2e
-    - /test/scenario_e2e
+    - /test/metric
 
 scheduler:
   poll-interval-seconds: 10
@@ -95,7 +94,7 @@ tracker:
   timeout-minutes: 60
 ```
 
-`target-directories`는 오토티어링 데몬의 권한 범위입니다. 현재 INFRA.md의 검증 스크립트가 생성하는 `/test/auto-tiering-e2e`, `/test/scenario_e2e`를 포함해야 테스트 파일이 스코어링됩니다.
+`target-directories`는 오토티어링 데몬의 권한 범위입니다. 현재 검증 스크립트는 `/test/metric` 하위에 테스트 데이터를 생성하므로, `/test/metric`을 포함해야 테스트 파일이 스코어링됩니다.
 
 ---
 

@@ -36,7 +36,7 @@ class ConfigLoaderTest {
         assertEquals(86400L, cfg.scoring().intervalSeconds());
         assertEquals(0.5, cfg.scoring().weightAccessTime());
         assertEquals(0.5, cfg.scoring().weightFileSize());
-        assertEquals(List.of("/test/auto-tiering-e2e", "/test/scenario_e2e"),
+        assertEquals(List.of("/test/metric"),
                 cfg.scoring().targetDirectories());
 
         // scheduler + windows
@@ -83,8 +83,7 @@ class ConfigLoaderTest {
                 "  weightFileSize: 0.4\n" +
                 "  localFsimageDir: /tmp/fsimage\n" +
                 "  targetDirectories:\n" +
-                "    - /test/auto-tiering-e2e\n" +
-                "    - /test/scenario_e2e/\n" +
+                "    - /test/metric/\n" +
                 "scheduler:\n" +
                 "  pollIntervalSeconds: 5\n" +
                 "  windows:\n" +
@@ -109,7 +108,7 @@ class ConfigLoaderTest {
             assertEquals(5, cfg.database().pool().maximumPoolSize());
             assertEquals(true, cfg.scoring().enabled());
             assertEquals(3600L, cfg.scoring().intervalSeconds());
-            assertEquals(List.of("/test/auto-tiering-e2e", "/test/scenario_e2e"),
+            assertEquals(List.of("/test/metric"),
                     cfg.scoring().targetDirectories());
             assertEquals(500L, cfg.scheduler().windows().get(0).interBatchWaitMs());
             assertEquals(5, cfg.tracker().maxWorkers());
