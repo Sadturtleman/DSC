@@ -32,7 +32,7 @@ class CompletionTrackerTest {
 
     /** application.yaml 과 동일한 기본값 */
     private static final AppConfig.TrackerSettings CFG =
-            new AppConfig.TrackerSettings(45, 60, 20, 0.95, 5, 3);
+            new AppConfig.TrackerSettings(45, 60, 20, 0.95, 5, 3, 5);
 
     @BeforeEach
     void setUp() {
@@ -197,7 +197,7 @@ class CompletionTrackerTest {
     @DisplayName("checker 지연 → touchCheckedAt, runCycle은 멈추지 않음")
     void slowChecker_touchCheckedAt() throws Exception {
         AppConfig.TrackerSettings fastCfg =
-                new AppConfig.TrackerSettings(0, 60, 20, 0.95, 1, 1);
+                new AppConfig.TrackerSettings(0, 60, 20, 0.95, 1, 1, 5);
         tracker = new CompletionTracker(fastCfg, mockRepo, mockChecker);
         PendingJob j = job(50L, Tier.COLD, 5);
         doReturn(List.of(j)).when(mockRepo).claimTrackableBatch(anyInt());
