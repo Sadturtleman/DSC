@@ -36,10 +36,10 @@ flowchart LR
     B -->|Scheduler Worker| C[DISPATCHED]
     C -->|Tracker Worker: claim| I[IN_PROGRESS]
     I -->|Tracker Worker: Success| D[COMPLETED]
-    C -->|Tracker Worker: Timeout (retry < max)| B
-    I -->|Tracker Worker: Timeout (retry < max)| B
-    C -->|Tracker Worker: Timeout (retry >= max)| E[FAILED]
-    I -->|Tracker Worker: Timeout (retry >= max)| E
+    C -->|"Tracker Worker: Timeout (retry < max)"| B
+    I -->|"Tracker Worker: Timeout (retry < max)"| B
+    C -->|"Tracker Worker: Timeout (retry >= max)"| E[FAILED]
+    I -->|"Tracker Worker: Timeout (retry >= max)"| E
 ```
 
 - 각 Worker는 본인에게 할당된 역할(INSERT, DISPATCH, COMPLETE)만 수행하므로 **데드락(Deadlock)이나 Race Condition이 발생하지 않는 견고한 동시성 모델**을 보장합니다.

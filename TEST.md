@@ -296,6 +296,28 @@ except Exception:
 PY
 }
 
+jmx_rpc_num_ops() {
+  python3 - <<'PY'
+import json
+import urllib.request
+
+try:
+    with urllib.request.urlopen("http://localhost:9870/jmx", timeout=5) as response:
+        data = json.load(response)
+    total = 0
+    for bean in data.get("beans", []):
+        name = bean.get("name", "")
+        # NameNodeActivity 빈에서 디렉토리 탐색(ls -R) 관련 메트릭만 추출 (백그라운드 통신 및 스케줄링 노이즈 배제)
+        if "name=NameNodeActivity" in name:
+            for key in ("GetListingOps",):
+                if key in bean:
+                    total += int(bean[key])
+    print(total)
+except Exception:
+    print(0)
+PY
+}
+
 sample_rpc_queue_avg() {
   local count=${1:-10}
   local interval=${2:-1}
@@ -836,46 +858,83 @@ require_cluster
 cleanup_path "$TEST_DIR"
 hdfs_cmd dfs -mkdir -p "$TEST_DIR"
 
+# Phase 1: 파일 배치 생성 (단일 JVM 호출로 최적화)
+# 플랫 디렉토리 구조에서는 ls -R이 1회의 RPC만 발생시키므로, 실제 환경의 복잡한 네임스페이스 탐색 부하를 재현하기 위해 하위 디렉토리 구조로 분산 생성합니다.
+echo "[INFO] E2 creating $N test directories and files (batch mode)..."
+DIR_ARGS=""
+FILE_ARGS=""
 for i in $(seq 1 "$N"); do
-  hdfs_cmd dfs -touchz "$TEST_DIR/file_$i.txt"
+  DIR_ARGS="$DIR_ARGS $TEST_DIR/dir_$i"
+  FILE_ARGS="$FILE_ARGS $TEST_DIR/dir_$i/file.txt"
 done
+hdfs_cmd dfs -mkdir -p $DIR_ARGS
+hdfs_cmd dfs -touchz $FILE_ARGS
 
-BASE_HEAP=$(jmx_heap_used)
-BASE_RPC=$(jmx_rpc_queue_avg)
+# accessTime 일괄 변경 (120일 전 → COLD 대상)
+PAST=$(date -d '120 days ago' +%Y%m%d:%H%M%S)
+hdfs_cmd dfs -touch -a -t "$PAST" $FILE_ARGS
 
-START=$(date +%s)
+# Phase 2: ls -R 측 RPC 횟수 측정
+LS_BEFORE_OPS=$(jmx_rpc_num_ops)
 hdfs_cmd dfs -ls -R "$TEST_DIR" >/dev/null
-END=$(date +%s)
-LS_HEAP=$(jmx_heap_used)
-LS_RPC=$(jmx_rpc_queue_avg)
-LS_TIME=$((END - START))
 
+# Hadoop JMX 메트릭(Metrics2)은 기본 10초 주기로 비동기 갱신되므로 반영 대기
+sleep 15
+LS_AFTER_OPS=$(jmx_rpc_num_ops)
+
+# Phase 3: Cooldown
+sleep 5
+
+# Phase 4: Auto(FSImage) 측 RPC 횟수 측정
 save_namespace
+AUTO_BEFORE_OPS=$(jmx_rpc_num_ops)
 CONFIG_FILE="$LOCAL_TMP_BASE/e2-config.yaml"
 LOG_FILE="$LOCAL_TMP_BASE/e2-daemon.log"
 write_test_config "$CONFIG_FILE"
 DAEMON_PID=$(start_daemon "$LOG_FILE" "$CONFIG_FILE")
-sleep 25
-AUTO_HEAP=$(jmx_heap_used)
-AUTO_RPC=$(jmx_rpc_queue_avg)
 
-awk -v base_heap="$BASE_HEAP" -v base_rpc="$BASE_RPC" -v ls_heap="$LS_HEAP" -v ls_rpc="$LS_RPC" -v ls_time="$LS_TIME" -v auto_heap="$AUTO_HEAP" -v auto_rpc="$AUTO_RPC" -v n="$N" '
+# 스코어링 완료 대기 (DB 폴링)
+SCORING_DONE=0
+for _ in $(seq 1 180); do
+  SCORED=$(sqlq "SELECT count(*) FROM pending_jobs WHERE file_path LIKE '${TEST_DIR}%';" || echo 0)
+  if [ "${SCORED:-0}" -ge "$N" ]; then
+    SCORING_DONE=1
+    break
+  fi
+  sleep 1
+done
+kill "$DAEMON_PID" >/dev/null 2>&1 || true
+DAEMON_PID=""
+
+# 데몬 동작 중 발생한 RPC가 JMX에 반영되도록 대기
+sleep 15
+AUTO_AFTER_OPS=$(jmx_rpc_num_ops)
+
+if [ "$SCORING_DONE" -ne 1 ]; then
+  echo "[FAIL] E2 scoring did not complete within timeout (scored=${SCORED:-0}/${N})"
+  tail -100 "$LOG_FILE" || true
+  exit 1
+fi
+
+# Phase 5: 산출
+awk -v ls_before="$LS_BEFORE_OPS" -v ls_after="$LS_AFTER_OPS" \
+    -v auto_before="$AUTO_BEFORE_OPS" -v auto_after="$AUTO_AFTER_OPS" -v n="$N" '
 BEGIN {
-  ls_heap_delta = ls_heap - base_heap
-  auto_heap_delta = auto_heap - base_heap
-  ls_rpc_delta = ls_rpc - base_rpc
-  auto_rpc_delta = auto_rpc - base_rpc
-  heap_offload = ls_heap_delta > 0 ? (1 - (auto_heap_delta / ls_heap_delta)) * 100 : 0
-  rpc_offload = ls_rpc_delta > 0 ? (1 - (auto_rpc_delta / ls_rpc_delta)) * 100 : 0
+  ls_ops = ls_after - ls_before
+  auto_ops = auto_after - auto_before
+  reduction = ls_ops > 0 ? (1 - (auto_ops / ls_ops)) * 100 : 0
   printf "file_count=%d\n", n
-  printf "recursive_ls_time_sec=%d\n", ls_time
-  printf "recursive_heap_delta_bytes=%.0f\n", ls_heap_delta
-  printf "auto_heap_delta_bytes=%.0f\n", auto_heap_delta
-  printf "heap_offload_percent=%.2f\n", heap_offload
-  printf "recursive_rpc_queue_delta_ms=%.6f\n", ls_rpc_delta
-  printf "auto_rpc_queue_delta_ms=%.6f\n", auto_rpc_delta
-  printf "rpc_offload_percent=%.2f\n", rpc_offload
-  print "[PASS] E2 NameNode offload metrics produced"
+  printf "ls_rpc_ops=%d\n", ls_ops
+  printf "auto_rpc_ops=%d\n", auto_ops
+  printf "rpc_reduction_percent=%.2f\n", reduction
+  if (ls_ops > 0 && reduction >= 50) {
+    print "[PASS] E2 FSImage approach uses " int(reduction) "% fewer NN RPCs than ls -R"
+  } else if (ls_ops > 0) {
+    printf "[WARN] E2 RPC reduction %.2f%% < 50%%\n", reduction
+  } else {
+    print "[FAIL] E2 ls -R generated 0 RPCs; increase OFFLOAD_FILE_COUNT"
+    exit 1
+  }
 }'
 SCRIPT
 
@@ -1030,7 +1089,7 @@ DB 상태:
 | S2 | `elapsed`, `state`, `pid` | 강제 종료 후 새 Java PID가 생기고 YARN 상태가 `RUNNING` 또는 `STABLE`이면 복구 완료다. |
 | P1 | `manual_sec_per_gb`, `auto_sec_per_gb`, `overhead_percent` | 수동 기준선 대비 자동화 파이프라인의 시간 오버헤드다. 권장 기준은 `<= 10%`다. |
 | E1 | `moved_total_gb`, `monthly_saving`, `saving_rate_percent` | HOT 유지 대비 WARM/COLD 이관으로 절감되는 월간 비용 추정치다. |
-| E2 | `heap_offload_percent`, `rpc_offload_percent` | recursive scan 대비 FSImage 기반 접근의 NameNode 부하 회피 정도다. 산출형 지표다. |
+| E2 | `ls_rpc_ops`, `auto_rpc_ops`, `rpc_reduction_percent` | `ls -R` 대비 FSImage 기반 접근의 NameNode RPC 호출 횟수 절감률이다. 산출형 지표다. |
 
 ## 6. 테스트별 생성/정리 범위
 
@@ -1093,5 +1152,4 @@ mvn -Dtest='!PendingJobRepositoryTest' test
 | P1 overhead |  | 권장 <= 10% |  | `p1_transfer_time.sh` 출력 |
 | E1 monthly saving |  | 산출 |  | `e1_cost_saving.sh` 출력 |
 | E1 saving rate |  | 산출 |  | `e1_cost_saving.sh` 출력 |
-| E2 heap offload |  | 산출 |  | `e2_namenode_offload.sh` 출력 |
-| E2 RPC offload |  | 산출 |  | `e2_namenode_offload.sh` 출력 |
+| E2 RPC reduction |  | 산출 |  | `e2_namenode_offload.sh` 출력 |
