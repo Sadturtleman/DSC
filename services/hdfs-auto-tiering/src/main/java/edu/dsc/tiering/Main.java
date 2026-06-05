@@ -80,7 +80,7 @@ public class Main {
                 PriorityRule rule = new PriorityRule(
                         scoring.weightAccessTime(), scoring.weightFileSize());
                 long intervalMs = scoring.intervalSeconds() * 1000L;
-                new ScoringEngine(fetcher, rule, repo, intervalMs).run();
+                new ScoringEngine(fetcher, rule, repo, intervalMs, scoring.targetDirectories()).run();
             } catch (Exception e) {
                 log.error("ScoringEngine stopped", e);
             }

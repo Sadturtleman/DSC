@@ -20,6 +20,9 @@ scoring:
   weight-access-time: 0.5
   weight-file-size: 0.5
   local-fsimage-dir: /tmp/hdfs-auto-tiering-fsimage-test
+  target-directories:
+    - /test/auto-tiering-e2e
+    - /test/scenario_e2e
 
 scheduler:
   poll-interval-seconds: 5

@@ -109,7 +109,8 @@ pending_jobs (DISPATCHED)
 CompletionTracker + HdfsPolicyChecker
 │
 ├─────► COMPLETED (블록 이동 95% 완료)
-└─────► FAILED (타임아웃 초과)
+├─────► PENDING (타임아웃 발생, retry_count < max)
+└─────► FAILED (타임아웃 발생, retry_count >= max)
 ```
 
 ## 인터페이스 계약
@@ -119,7 +120,7 @@ CompletionTracker + HdfsPolicyChecker
 
 | 컬럼 | 읽기 | 쓰기 |
 |---|---|---|
-| `status` | `DISPATCHED` / `IN_PROGRESS` 조회 | `IN_PROGRESS` / `COMPLETED` / `FAILED` 로 전이 |
+| `status` | `DISPATCHED` / `IN_PROGRESS` 조회 | `IN_PROGRESS` / `COMPLETED` / `FAILED` / `PENDING` (재시도) 로 전이 |
 | `dispatched_at` | 타임아웃 기준 | — |
 | `completed_at` | — | `COMPLETED` 전이 시 기록 |
 

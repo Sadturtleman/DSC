@@ -7,6 +7,7 @@ import edu.dsc.tiering.model.Tier;
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public final class AppConfig {
 
@@ -114,6 +115,7 @@ public final class AppConfig {
         private final double weightAccessTime;
         private final double weightFileSize;
         private final String localFsimageDir;
+        private final List<String> targetDirectories;
 
         @JsonCreator
         public Scoring(@JsonProperty("enabled") Boolean enabled,
@@ -124,7 +126,9 @@ public final class AppConfig {
                        @JsonProperty("weightFileSize")
                        @JsonAlias("weight-file-size") Double weightFileSize,
                        @JsonProperty("localFsimageDir")
-                       @JsonAlias("local-fsimage-dir") String localFsimageDir) {
+                       @JsonAlias("local-fsimage-dir") String localFsimageDir,
+                       @JsonProperty("targetDirectories")
+                       @JsonAlias("target-directories") List<String> targetDirectories) {
             this.enabled = enabled != null && enabled;
             this.intervalSeconds = intervalSeconds == null ? 86400L : intervalSeconds;
             this.weightAccessTime = weightAccessTime == null ? 0.5 : weightAccessTime;
@@ -132,10 +136,11 @@ public final class AppConfig {
             this.localFsimageDir = (localFsimageDir == null || localFsimageDir.isBlank())
                     ? "/tmp/hdfs-auto-tiering-fsimage"
                     : localFsimageDir;
+            this.targetDirectories = normalizeTargetDirectories(targetDirectories);
         }
 
         static Scoring disabledDefaults() {
-            return new Scoring(false, 86400L, 0.5, 0.5, "/tmp/hdfs-auto-tiering-fsimage");
+            return new Scoring(false, 86400L, 0.5, 0.5, "/tmp/hdfs-auto-tiering-fsimage", List.of());
         }
 
         public boolean enabled() { return enabled; }
@@ -143,6 +148,34 @@ public final class AppConfig {
         public double weightAccessTime() { return weightAccessTime; }
         public double weightFileSize() { return weightFileSize; }
         public String localFsimageDir() { return localFsimageDir; }
+        public List<String> targetDirectories() { return targetDirectories; }
+
+        private static List<String> normalizeTargetDirectories(List<String> targetDirectories) {
+            if (targetDirectories == null || targetDirectories.isEmpty()) {
+                return List.of();
+            }
+            return targetDirectories.stream()
+                    .filter(path -> path != null && !path.isBlank())
+                    .map(String::trim)
+                    .map(Scoring::normalizeDirectory)
+                    .distinct()
+                    .collect(Collectors.toUnmodifiableList());
+        }
+
+        private static String normalizeDirectory(String path) {
+            if (!path.startsWith("/")) {
+                throw new IllegalArgumentException(
+                        "scoring.target-directories must contain absolute HDFS paths: " + path);
+            }
+            if ("/".equals(path)) {
+                return path;
+            }
+            String normalized = path;
+            while (normalized.endsWith("/") && normalized.length() > 1) {
+                normalized = normalized.substring(0, normalized.length() - 1);
+            }
+            return normalized;
+        }
     }
 
     public static final class Scheduler {

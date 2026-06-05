@@ -91,6 +91,8 @@ JAR 파일 및 설정 파일은 HDFS의 다음 경로에 위치해야 합니다.
 - JAR 파일: `hdfs:///apps/hdfs-auto-tiering/lib/hdfs-auto-tiering.jar`
 - 설정 파일: `hdfs:///apps/hdfs-auto-tiering/config/hdfs-auto-tiering-config.yaml`
 
+설정 파일의 `scoring.target-directories`는 데몬이 처리할 HDFS 경로 화이트리스트입니다. INFRA.md 검증 스크립트를 실행할 때는 `/test/auto-tiering-e2e`, `/test/scenario_e2e`를 포함해야 테스트 파일이 스코어링됩니다.
+
 ### 4-2. YARN Service 정의 파일 (`hdfs-auto-tiering-service.json`)
 서버의 `~` 경로에 위치하며, YARN Service 프레임워크가 앱을 띄우는 명세서 역할을 합니다.
 내부적으로 위 HDFS 경로에서 파일을 내려받고 `java -jar` 명령어로 컨테이너를 실행합니다.

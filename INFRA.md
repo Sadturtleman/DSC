@@ -67,7 +67,7 @@
   * **상황**: `pending_jobs` 테이블에 작업 목록이 정상적으로 적재되었는지 수동으로 쿼리하여 확인할 때 사용합니다.
 * **DB 작업 스케줄링 실시간 모니터링**: 
   ```bash
-  watch -n 2 "psql -h localhost -U dsc -d dsc_tiering -c \"SELECT job_id, file_path, current_tier, target_tier, status FROM pending_jobs ORDER BY job_id DESC LIMIT 20;\""
+  watch -n 2 "psql -h localhost -U dsc -d dsc_tiering -c \"SELECT job_id, file_path, current_tier, target_tier, status, retry_count, last_failed_at FROM pending_jobs ORDER BY job_id DESC LIMIT 20;\""
   ```
   * **상황**: 오토 티어링 데몬이 대상 파일들을 스케줄링하고 HDFS로 명령을 내리는(Dispatch) 과정을 실시간(2초마다 갱신)으로 추적하며, `status`(PENDING -> DISPATCHED -> IN_PROGRESS -> COMPLETED)가 전이되는 과정을 모니터링할 때 사용합니다.
 
@@ -331,11 +331,12 @@ sudo -u postgres psql -c "CREATE DATABASE dsc_tiering OWNER dsc;"
 
 ### 7-3. 스키마(DDL) 파일 적용
 
-프로젝트 저장소가 클론되어 있다고 가정하고 `db/migrations/V001__pending_jobs.sql` 파일을 실행합니다.
+프로젝트 저장소가 클론되어 있다고 가정하고 마이그레이션 파일들을 순서대로 실행합니다.
 
 ```bash
 # 본인의 프로젝트 루트(~/DSC 또는 지정한 경로)에서 실행
 psql -h localhost -U dsc -d dsc_tiering -f ~/DSC/db/migrations/V001__pending_jobs.sql
+psql -h localhost -U dsc -d dsc_tiering -f ~/DSC/db/migrations/V002__add_retry_columns.sql
 ```
 
 테이블이 정상적으로 생성되었는지 확인합니다.
@@ -1434,6 +1435,9 @@ scoring:
   weightAccessTime: 0.5
   weightFileSize: 0.5
   localFsimageDir: /tmp/hdfs-auto-tiering-fsimage
+  targetDirectories:
+    - /test/auto-tiering-e2e
+    - /test/scenario_e2e
 
 scheduler:
   pollIntervalSeconds: 10
@@ -1460,6 +1464,8 @@ tracker:
   nodenameSemaphore: 3
 EOF
 ```
+
+`targetDirectories`는 ScoringEngine이 처리할 HDFS 경로 화이트리스트다. 위 인프라 문서의 E2E/비용 검증 스크립트가 생성하는 `/test/auto-tiering-e2e`, `/test/scenario_e2e`가 빠지면 job이 생성되지 않아 테스트가 `NOT_CREATED` 상태로 대기한다.
 
 ### 18-3. YARN Service Framework 동작 사전 검증
 
@@ -2113,6 +2119,8 @@ scoring:
   weightAccessTime: 0.5
   weightFileSize: 0.5
   localFsimageDir: /tmp/hdfs-auto-tiering-fsimage
+  targetDirectories:
+    - /test/scenario_e2e
 scheduler:
   pollIntervalSeconds: 10
   windows:

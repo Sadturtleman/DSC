@@ -17,7 +17,7 @@ class ScoringEngineTest {
 
     private final Instant now = Instant.parse("2026-05-23T00:00:00Z");
     private final PriorityRule rule = new PriorityRule(0.5, 0.5, now);
-    private final ScoringEngine engine = new ScoringEngine(null, rule, null, 1L);
+    private final ScoringEngine engine = new ScoringEngine(null, rule, null, 1L, List.of("/"));
 
     @Test
     void priorityScoreUsesEqualAccessAndSizeRanksLowerFirst() {
@@ -55,6 +55,33 @@ class ScoringEngineTest {
                 file("/one-ssd-warm", 100, 60, 10)));
 
         assertFalse(jobs.stream().anyMatch(job -> job.meta().path().equals("/one-ssd-warm")));
+    }
+
+    @Test
+    void targetDirectoryWhitelistKeepsOnlyConfiguredSubtrees() {
+        ScoringEngine scopedEngine = new ScoringEngine(null, rule, null, 1L,
+                List.of("/test/auto-tiering-e2e", "/test/scenario_e2e/"));
+
+        List<String> paths = scopedEngine.filterTargetFiles(List.of(
+                file("/test/auto-tiering-e2e/sample.dat", 100, 120, 12),
+                file("/test/scenario_e2e/app.log", 100, 120, 12),
+                file("/test/auto-tiering-e2e-backup/sample.dat", 100, 120, 12),
+                file("/tmp/other.dat", 100, 120, 12)))
+                .stream()
+                .map(FileMetadata::path)
+                .collect(Collectors.toList());
+
+        assertEquals(List.of(
+                "/test/auto-tiering-e2e/sample.dat",
+                "/test/scenario_e2e/app.log"), paths);
+    }
+
+    @Test
+    void emptyTargetDirectoryWhitelistMatchesNothing() {
+        ScoringEngine scopedEngine = new ScoringEngine(null, rule, null, 1L, List.of());
+
+        assertTrue(scopedEngine.filterTargetFiles(List.of(
+                file("/test/auto-tiering-e2e/sample.dat", 100, 120, 12))).isEmpty());
     }
 
     private FileMetadata file(String path, long size, long daysAgo, int storagePolicy) {

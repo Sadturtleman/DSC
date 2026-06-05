@@ -4,6 +4,8 @@
 
 ## 1. Accuracy (정확도) 검증
 
+> 사전 조건: 이 문서의 정량 지표 스크립트는 INFRA.md E2E 경로와 별개로 `/test/metric_*` 경로를 사용합니다. 실행할 때만 검증용 데몬 설정의 `scoring.target-directories`에 `/test/metric_match`, `/test/metric_perf`, `/test/metric_heap`를 추가해야 합니다.
+
 ### 1.1 티어링 대상 파일 리스트 일치율 (목표: 100%)
 **방안:** HDFS에 다수의 더미 파일을 생성하고 임의의 접근 시간(atime)을 부여한 뒤, FSImage 파싱 결과(DB)와 NameNode 직접 조회의 결과를 교차 검증합니다.
 

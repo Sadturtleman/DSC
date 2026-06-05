@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -35,6 +36,8 @@ class ConfigLoaderTest {
         assertEquals(86400L, cfg.scoring().intervalSeconds());
         assertEquals(0.5, cfg.scoring().weightAccessTime());
         assertEquals(0.5, cfg.scoring().weightFileSize());
+        assertEquals(List.of("/test/auto-tiering-e2e", "/test/scenario_e2e"),
+                cfg.scoring().targetDirectories());
 
         // scheduler + windows
         assertEquals(5, cfg.scheduler().pollIntervalSeconds());
@@ -79,6 +82,9 @@ class ConfigLoaderTest {
                 "  weightAccessTime: 0.6\n" +
                 "  weightFileSize: 0.4\n" +
                 "  localFsimageDir: /tmp/fsimage\n" +
+                "  targetDirectories:\n" +
+                "    - /test/auto-tiering-e2e\n" +
+                "    - /test/scenario_e2e/\n" +
                 "scheduler:\n" +
                 "  pollIntervalSeconds: 5\n" +
                 "  windows:\n" +
@@ -103,6 +109,8 @@ class ConfigLoaderTest {
             assertEquals(5, cfg.database().pool().maximumPoolSize());
             assertEquals(true, cfg.scoring().enabled());
             assertEquals(3600L, cfg.scoring().intervalSeconds());
+            assertEquals(List.of("/test/auto-tiering-e2e", "/test/scenario_e2e"),
+                    cfg.scoring().targetDirectories());
             assertEquals(500L, cfg.scheduler().windows().get(0).interBatchWaitMs());
             assertEquals(5, cfg.tracker().maxWorkers());
         } finally {
@@ -128,6 +136,7 @@ class ConfigLoaderTest {
             assertEquals("", cfg.hdfs().user());
             assertEquals("ALL_SSD", cfg.hdfs().policyMapping().get(Tier.HOT));
             assertEquals(false, cfg.scoring().enabled());
+            assertEquals(List.of(), cfg.scoring().targetDirectories());
             assertEquals(10, cfg.scheduler().pollIntervalSeconds());
             assertEquals(1, cfg.scheduler().windows().size());
             assertEquals(0.95, cfg.tracker().completionRatio());

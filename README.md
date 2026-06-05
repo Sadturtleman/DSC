@@ -14,7 +14,7 @@ YARN Service Framework를 통해 단일 JVM 컨테이너로 기동되며, 하나
 
 1. **Scoring Worker (Producer)**
    - **역할**: 매일 자정 등 주기적으로 실행되어 이동할 파일을 선별합니다.
-   - **작동 원리**: Java 내부의 `DFSAdmin.fetchImage` API를 호출하여 NameNode로부터 최신 FSImage를 원격(HTTP)으로 받아옵니다. 이후 내장된 `OfflineImageViewerPB`를 통해 메타데이터를 파싱하고, 우선순위 계산 후 결과를 PostgreSQL에 `PENDING` 상태로 일괄(Batch) 삽입합니다.
+   - **작동 원리**: Java 내부의 `DFSAdmin.fetchImage` API를 호출하여 NameNode로부터 최신 FSImage를 원격(HTTP)으로 받아옵니다. 이후 내장된 `OfflineImageViewerPB`를 통해 메타데이터를 파싱하고, `scoring.target-directories`로 허용된 디렉터리 하위 파일만 우선순위 계산 후 PostgreSQL에 `PENDING` 상태로 일괄(Batch) 삽입합니다.
    
 2. **Scheduler Worker (Dispatcher & Feedback Loop)**
    - **역할**: JMX 메트릭 피드백 루프를 통해 클러스터의 부하 상태를 모니터링하며 최적의 속도로 이동 명령을 하달합니다.
@@ -36,8 +36,10 @@ flowchart LR
     B -->|Scheduler Worker| C[DISPATCHED]
     C -->|Tracker Worker: claim| I[IN_PROGRESS]
     I -->|Tracker Worker: Success| D[COMPLETED]
-    C -->|Tracker Worker: Timeout| E[FAILED]
-    I -->|Tracker Worker: Timeout| E
+    C -->|Tracker Worker: Timeout (retry < max)| B
+    I -->|Tracker Worker: Timeout (retry < max)| B
+    C -->|Tracker Worker: Timeout (retry >= max)| E[FAILED]
+    I -->|Tracker Worker: Timeout (retry >= max)| E
 ```
 
 - 각 Worker는 본인에게 할당된 역할(INSERT, DISPATCH, COMPLETE)만 수행하므로 **데드락(Deadlock)이나 Race Condition이 발생하지 않는 견고한 동시성 모델**을 보장합니다.
@@ -80,6 +82,9 @@ scoring:
   weight-access-time: 0.5
   weight-file-size: 0.5
   local-fsimage-dir: /tmp/hdfs-auto-tiering-fsimage
+  target-directories:
+    - /test/auto-tiering-e2e
+    - /test/scenario_e2e
 
 scheduler:
   poll-interval-seconds: 10
@@ -89,6 +94,8 @@ tracker:
   poll-interval-seconds: 45
   timeout-minutes: 60
 ```
+
+`target-directories`는 오토티어링 데몬의 권한 범위입니다. 현재 INFRA.md의 검증 스크립트가 생성하는 `/test/auto-tiering-e2e`, `/test/scenario_e2e`를 포함해야 테스트 파일이 스코어링됩니다.
 
 ---
 

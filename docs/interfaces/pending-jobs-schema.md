@@ -104,6 +104,8 @@ scheduler 는 HDFS 호출 직후 동기적으로 실패한 경우에만 `retry_c
 
 ### 4.1. scoring engine — INSERT
 
+INSERT 대상은 `scoring.target-directories` 화이트리스트에 포함된 HDFS 절대 경로의 파일로 제한한다. 화이트리스트가 비어 있으면 scoring engine은 안전하게 아무 행도 생성하지 않는다.
+
 ```sql
 INSERT INTO pending_jobs
     (file_path, file_size_bytes, current_tier, target_tier,

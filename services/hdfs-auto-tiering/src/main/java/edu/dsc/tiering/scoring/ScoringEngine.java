@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * FSImage를 주기적으로 fetch·파싱하여 이동 대상 파일을 {@code pending_jobs}에 삽입하는
@@ -63,21 +64,25 @@ public class ScoringEngine implements Runnable {
     private final PriorityRule         rule;
     private final PendingJobRepository repo;
     private final long                 intervalMs;
+    private final List<String>         targetDirectories;
 
     /**
      * @param fetcher     FSImage 다운로드·파싱 담당
      * @param rule        우선순위 계산·티어 결정 담당
      * @param repo        DB 접근 담당
      * @param intervalMs  실행 주기 (ms). 예: 86_400_000L = 24h
+     * @param targetDirectories 스코어링을 허용할 HDFS 디렉터리 화이트리스트
      */
     public ScoringEngine(FsImageFetcher fetcher,
                          PriorityRule rule,
                          PendingJobRepository repo,
-                         long intervalMs) {
-        this.fetcher     = fetcher;
-        this.rule        = rule;
-        this.repo        = repo;
-        this.intervalMs  = intervalMs;
+                         long intervalMs,
+                         List<String> targetDirectories) {
+        this.fetcher            = fetcher;
+        this.rule               = rule;
+        this.repo               = repo;
+        this.intervalMs         = intervalMs;
+        this.targetDirectories  = normalizeTargetDirectories(targetDirectories);
     }
 
     // ── Runnable ────────────────────────────────────────────────────────
@@ -117,19 +122,30 @@ public class ScoringEngine implements Runnable {
         Instant start = Instant.now();
         log.info("=== ScoringEngine 사이클 시작 ===");
 
+        if (targetDirectories.isEmpty()) {
+            log.warn("scoring.target-directories가 비어 있어 FSImage 수집과 스코어링을 건너뜁니다.");
+            return;
+        }
+
         // 1. FSImage fetch & 파싱
         List<FileMetadata> allFiles = fetcher.fetchAndParse();
         log.info("FSImage 파싱 완료. 전체 파일 수={}", allFiles.size());
 
-        // 2. 스코어링: 이동 대상 필터링 + 순위 기반 우선순위 계산
-        List<ScoredJob> jobs = score(allFiles);
-        log.info("이동 대상 파일 수={} / 전체={}", jobs.size(), allFiles.size());
+        // 2. 화이트리스트 경로만 스코어링 대상으로 제한
+        List<FileMetadata> targetFiles = filterTargetFiles(allFiles);
+        log.info("화이트리스트 필터 완료. 대상 파일 수={} / 전체={}",
+                targetFiles.size(), allFiles.size());
+
+        // 3. 스코어링: 이동 대상 필터링 + 순위 기반 우선순위 계산
+        List<ScoredJob> jobs = score(targetFiles);
+        log.info("이동 대상 파일 수={} / 필터링 대상={} / 전체={}",
+                jobs.size(), targetFiles.size(), allFiles.size());
         for (ScoredJob job : jobs) {
             log.info("  이동 대상: path={} {}→{} priority={}",
                     job.meta().path(), job.currentTier(), job.targetTier(), job.priorityScore());
         }
 
-        // 3. DB 배치 INSERT
+        // 4. DB 배치 INSERT
         int inserted = batchInsert(jobs);
 
         Duration elapsed = Duration.between(start, Instant.now());
@@ -161,6 +177,56 @@ public class ScoringEngine implements Runnable {
                     rule.rankScore(candidate.accessRank, candidate.sizeRank)));
         }
         return result;
+    }
+
+    List<FileMetadata> filterTargetFiles(List<FileMetadata> files) {
+        if (targetDirectories.isEmpty()) {
+            return List.of();
+        }
+        return files.stream()
+                .filter(meta -> isTargetPath(meta.path()))
+                .collect(Collectors.toList());
+    }
+
+    boolean isTargetPath(String path) {
+        if (path == null || path.isBlank()) {
+            return false;
+        }
+        return targetDirectories.stream()
+                .anyMatch(targetDirectory -> isSameDirectoryOrChild(path, targetDirectory));
+    }
+
+    private static boolean isSameDirectoryOrChild(String path, String targetDirectory) {
+        if ("/".equals(targetDirectory)) {
+            return path.startsWith("/");
+        }
+        return path.equals(targetDirectory) || path.startsWith(targetDirectory + "/");
+    }
+
+    private static List<String> normalizeTargetDirectories(List<String> targetDirectories) {
+        if (targetDirectories == null || targetDirectories.isEmpty()) {
+            return List.of();
+        }
+        return targetDirectories.stream()
+                .filter(path -> path != null && !path.isBlank())
+                .map(String::trim)
+                .map(ScoringEngine::normalizeDirectory)
+                .distinct()
+                .collect(Collectors.toUnmodifiableList());
+    }
+
+    private static String normalizeDirectory(String path) {
+        if (!path.startsWith("/")) {
+            throw new IllegalArgumentException("targetDirectories must be absolute HDFS paths: " + path);
+        }
+        if ("/".equals(path)) {
+            return path;
+        }
+        String normalized = path;
+        while (normalized.endsWith("/") && normalized.length() > 1) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        return normalized;
     }
 
     /**
