@@ -97,7 +97,7 @@ public class CompletionTracker implements Runnable {
                 Duration elapsed = Duration.between(
                         job.dispatchedAt(), java.time.OffsetDateTime.now());
                 if (elapsed.toMinutes() >= cfg.timeoutMinutes()) {
-                    int retryCount = repo.getRetryCount(job.id());
+                    int retryCount = repo.getRetryCount(job.jobId());
                     if (retryCount < cfg.maxRetryCount()) {
                         // 재시도 : pending으로 복귀
                         repo.markFailed(job.jobId());
@@ -106,9 +106,9 @@ public class CompletionTracker implements Runnable {
                     }
                     else{
                         // 재시도 횟수 초과
-                        repo.markFailedPermanently(job.id());
+                        repo.markFailedPermanently(job.jobId());
                         log.error("TIMEOUT→FAILED(permanent) id={} path={} attempts={}",
-                                job.id(), job.filePath(), retryCount);
+                                job.jobId(), job.filePath(), retryCount);
                     }
                     continue;
                 }
