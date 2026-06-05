@@ -76,7 +76,7 @@ DISPATCHED/IN_PROGRESS
 
 ```bash
 psql -h localhost -U dsc -d dsc_tiering \
-    -f ~/DSC/db/migrations/V002__add_retry_columns.sql
+    -f /home/dsc/V002__add_retry_columns.sql
 ```
 
 적용 결과를 확인한다.

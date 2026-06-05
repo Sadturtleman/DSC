@@ -193,37 +193,33 @@ public class PendingJobRepository {
         // unchanged so timeout accounting remains based on the original dispatch.
     }
 
-    /**
-     * 타임아웃된 job 을 PENDING 으로 복귀시키고 retry_count 를 증가.
-     * BatchScheduler 가 다음 사이클에 다시 집어가도록 한다.
-     */
     public void markForRetry(long id) {
-        final String sql = """
-                UPDATE pending_jobs
-                SET status          = 'PENDING',
-                    retry_count     = retry_count + 1,
-                    last_failed_at  = NOW(),
-                    dispatched_at   = NULL,
-                    last_checked_at = NULL
-                WHERE id = ?
-                """;
-        update(sql, id);
-        log.info("RETRY(→PENDING) id={}", id);
+        final String sql = 
+                "UPDATE pending_jobs " +
+                "SET status          = 'PENDING', " +
+                "    retry_count     = retry_count + 1, " +
+                "    dispatched_at   = NULL " +
+                "WHERE job_id = ?";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            ps.executeUpdate();
+        } catch (SQLException e) { throw new RuntimeException(e); }
     }
 
     /**
      * retry_count 가 한도를 초과한 경우 최종 실패로 마킹.
      */
     public void markFailedPermanently(long id) {
-        final String sql = """
-                UPDATE pending_jobs
-                SET status          = 'FAILED',
-                    last_checked_at = NOW(),
-                    last_failed_at  = NOW()
-                WHERE id = ?
-                """;
-        update(sql, id);
-        log.warn("FAILED(permanent) id={}", id);
+        final String sql = 
+                "UPDATE pending_jobs " +
+                "SET status          = 'FAILED' " +
+                "WHERE job_id = ?";
+        try (Connection c = dataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            ps.setLong(1, id);
+            ps.executeUpdate();
+        } catch (SQLException e) { throw new RuntimeException(e); }
     }
 
     /**
@@ -231,15 +227,15 @@ public class PendingJobRepository {
      * CompletionTracker 가 재시도 여부 결정 시 사용.
      */
     public int getRetryCount(long id) {
-        final String sql = "SELECT retry_count FROM pending_jobs WHERE id = ?";
-        try (Connection conn = ds.getConnection();
-            PreparedStatement ps = conn.prepareStatement(sql)) {
+        final String sql = "SELECT retry_count FROM pending_jobs WHERE job_id = ?";
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setLong(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) return rs.getInt(1);
             }
         } catch (SQLException e) {
-            log.error("getRetryCount 실패 id={}: {}", id, e.getMessage());
+            throw new RuntimeException(e);
         }
         return 0;
     }

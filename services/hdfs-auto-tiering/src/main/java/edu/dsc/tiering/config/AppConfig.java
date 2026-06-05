@@ -214,7 +214,7 @@ public final class AppConfig {
         private final double completionRatio;
         private final int maxWorkers;
         private final int nodenameSemaphore;
-        int    maxRetryCount        // ← 추가: 기본값 5
+        private final int maxRetryCount;
 
         @JsonCreator
         public TrackerSettings(@JsonProperty("pollIntervalSeconds")
@@ -228,17 +228,20 @@ public final class AppConfig {
                                @JsonProperty("maxWorkers")
                                @JsonAlias("max-workers") Integer maxWorkers,
                                @JsonProperty("nodenameSemaphore")
-                               @JsonAlias({"nodename-semaphore", "namenode-semaphore", "namenodeSemaphore"}) Integer nodenameSemaphore) {
+                               @JsonAlias({"nodename-semaphore", "namenode-semaphore", "namenodeSemaphore"}) Integer nodenameSemaphore,
+                               @JsonProperty("maxRetryCount")
+                               @JsonAlias("max-retry-count") Integer maxRetryCount) {
             this.pollIntervalSeconds = pollIntervalSeconds == null ? 45 : pollIntervalSeconds;
             this.timeoutMinutes = timeoutMinutes == null ? 60 : timeoutMinutes;
             this.batchSize = batchSize == null ? 20 : batchSize;
             this.completionRatio = completionRatio == null ? 0.95 : completionRatio;
             this.maxWorkers = maxWorkers == null ? 5 : maxWorkers;
             this.nodenameSemaphore = nodenameSemaphore == null ? 3 : nodenameSemaphore;
+            this.maxRetryCount = maxRetryCount == null ? 5 : maxRetryCount;
         }
 
         static TrackerSettings defaults() {
-            return new TrackerSettings(45, 60, 20, 0.95, 5, 3);
+            return new TrackerSettings(45, 60, 20, 0.95, 5, 3, 5);
         }
 
         public int pollIntervalSeconds() { return pollIntervalSeconds; }
@@ -247,5 +250,6 @@ public final class AppConfig {
         public double completionRatio() { return completionRatio; }
         public int maxWorkers() { return maxWorkers; }
         public int nodenameSemaphore() { return nodenameSemaphore; }
+        public int maxRetryCount() { return maxRetryCount; }
     }
 }
