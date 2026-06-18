@@ -1,103 +1,112 @@
 # HDFS Auto-Tiering Service (DSC)
 
-HDFS의 NameNode 메타데이터(FSImage)를 분석하여 파일의 접근 빈도 및 크기에 따라 데이터를 HOT(ALL_SSD), WARM(ONE_SSD), COLD(COLD/ARCHIVE) 스토리지 정책으로 자동 재배치(Tiering)하는 클라우드 네이티브 데몬입니다.
+HDFS의 NameNode 메타데이터(FSImage)를 분석하여 파일의 접근 빈도 및 크기에 따라 데이터를 HOT(ALL_SSD), WARM(ONE_SSD), COLD(COLD/ARCHIVE) 스토리지 정책으로 자동 재배치하는 오토티어링 서비스입니다.
 
 ---
 
-## 📌 아키텍처 개요 (Architecture Highlights)
+## 아키텍처 개요
 
-본 서비스는 외부 Python 스크립트나 별도 크론(Cron) 스케줄러에 의존하지 않는 **"All-in-Java Single JAR"** 아키텍처를 채택하고 있습니다. 
+본 서비스는 Java 단일 JAR로 패키징되어 YARN의 서비스 프레임워크으로 배포할 수 있도록 설계되었습니다. 하나의 프로세스 내부에서 세 가지 역할인 Scoring, Scheduling, Tracking을 수행합니다.
 
-YARN Service Framework를 통해 단일 JVM 컨테이너로 기동되며, 하나의 프로세스 내부에서 3개의 독립적인 비동기 워커(Worker) 스레드가 역할을 분담하여 완벽하게 구동됩니다.
+### 구성
 
-### 3-Worker 모델
+1. Scoring (`ScoringEngine`)
+    - 역할: `FsImageFetcher`로 FSImage를 다운로드·OIV 파싱한 뒤, `PriorityRule`로 목표 티어와 우선순위를 계산하여 `PendingJobRepository.insertPendingJobs`로 `pending_jobs`에 PENDING 행을 삽입합니다.
+    - 구현 참조: [hdfs-auto-tiering/src/main/java/edu/dsc/tiering/hdfs/FsImageFetcher.java](hdfs-auto-tiering/src/main/java/edu/dsc/tiering/hdfs/FsImageFetcher.java), [hdfs-auto-tiering/src/main/java/edu/dsc/tiering/scoring/ScoringEngine.java](hdfs-auto-tiering/src/main/java/edu/dsc/tiering/scoring/ScoringEngine.java)
 
-1. **Scoring Worker (Producer)**
-   - **역할**: 매일 자정 등 주기적으로 실행되어 이동할 파일을 선별합니다.
-   - **작동 원리**: Java 내부의 `DFSAdmin.fetchImage` API를 호출하여 NameNode로부터 최신 FSImage를 원격(HTTP)으로 받아옵니다. 이후 내장된 `OfflineImageViewerPB`를 통해 메타데이터를 파싱하고, `scoring.target-directories`로 허용된 디렉터리 하위 파일만 우선순위 계산 후 PostgreSQL에 `PENDING` 상태로 일괄(Batch) 삽입합니다.
-   
-2. **Scheduler Worker (Dispatcher & Feedback Loop)**
-   - **역할**: JMX 메트릭 피드백 루프를 통해 클러스터의 부하 상태를 모니터링하며 최적의 속도로 이동 명령을 하달합니다.
-   - **작동 원리**: 단순한 주기적 폴링이 아니라, NameNode의 **JMX API(`http://<nn>:9870/jmx`)**를 호출하여 External SPS의 대기열(Queue Length)과 처리량(Throughput)을 실시간으로 확인합니다. 대기열이 포화 상태이면 스케줄링을 일시 정지(Backoff)하고, 여유가 생기면 `SELECT FOR UPDATE SKIP LOCKED`로 DB 작업을 선점하여 명령을 밀어넣는 **동적 피드백 루프(Dynamic Feedback Loop)** 체계로 동작합니다.
+2. Scheduling (`BatchScheduler`)
+    - 역할: `PendingJobRepository.claimBatch`로 우선순위 상위 PENDING을 원자적으로 점유해 상태를 `DISPATCHED`로 변경하고, 각 job에 대해 `HdfsApiCaller.applyTier`를 호출해 HDFS에 storage policy를 적용합니다. HDFS 호출 실패는 `PendingJobRepository.recordHdfsFailure`로 처리됩니다.
+    - 구현 참조: [hdfs-auto-tiering/src/main/java/edu/dsc/tiering/scheduler/BatchScheduler.java](hdfs-auto-tiering/src/main/java/edu/dsc/tiering/scheduler/BatchScheduler.java), [hdfs-auto-tiering/src/main/java/edu/dsc/tiering/repository/PendingJobRepository.java](hdfs-auto-tiering/src/main/java/edu/dsc/tiering/repository/PendingJobRepository.java)
 
-3. **Tracker Worker (Consumer / Verifier)**
-   - **역할**: NameNode의 글로벌 Lock 경합을 원천 차단하기 위해, 전수 조사가 아닌 **'JMX 모니터링 추론' 및 '주기적 샘플링'**으로 물리적 이동 완료를 검증합니다.
-   - **작동 원리**: 수만 개의 파일을 일일이 `getFileBlockLocations` API로 검사하면 NameNode에 극심한 Read Lock 병목이 발생합니다. 이를 방지하기 위해 JMX의 블록 이동 지표(`blocksMoved`)와 큐 상태를 관찰하여 배치 작업의 완료 타이밍을 1차 추론합니다. 이후 전체 작업 중 **극히 일부(예: 1~5%)만 샘플링**하여 블록 물리 위치를 교차 검증하고, 검증 통과 시 해당 배치를 일괄 `COMPLETED`로 처리하는 고도화된 기법을 사용합니다.
+3. Tracking (`CompletionTracker`)
+    - 역할: `PendingJobRepository.claimTrackableBatch`로 DISPATCHED/IN_PROGRESS 작업을 점유해 `IN_PROGRESS`로 전이한 뒤, `HdfsPolicyChecker.isSatisfied`를 병렬로 호출해 완료 여부를 검증합니다. 성공 시 `markCompleted`, 타임아웃/영구 실패 시 `markFailed` 또는 `markFailedPermanently`를 호출합니다.
+    - 구현 참조: [hdfs-auto-tiering/src/main/java/edu/dsc/tiering/tracking/CompletionTracker.java](hdfs-auto-tiering/src/main/java/edu/dsc/tiering/tracking/CompletionTracker.java), [hdfs-auto-tiering/src/main/java/edu/dsc/tiering/hdfs/HdfsPolicyChecker.java](hdfs-auto-tiering/src/main/java/edu/dsc/tiering/hdfs/HdfsPolicyChecker.java)
 
 ---
 
-## 🗄 데이터베이스 상태 전이도 (State Machine)
+## 🗄 데이터베이스 상태 전이도
 
-모든 파일 이동 작업은 PostgreSQL `pending_jobs` 테이블 상에서 엄격한 생명주기를 가집니다.
+모든 파일 이동 작업은 PostgreSQL의 `pending_jobs` 테이블에서 다음과 같은 상태 전이를 따릅니다.
 
 ```mermaid
 flowchart LR
-    A[FSImage Parsed] -->|Scoring Worker| B[PENDING]
-    B -->|Scheduler Worker| C[DISPATCHED]
-    C -->|Tracker Worker: claim| I[IN_PROGRESS]
-    I -->|Tracker Worker: Success| D[COMPLETED]
-    C -->|"Tracker Worker: Timeout (retry < max)"| B
-    I -->|"Tracker Worker: Timeout (retry < max)"| B
-    C -->|"Tracker Worker: Timeout (retry >= max)"| E[FAILED]
-    I -->|"Tracker Worker: Timeout (retry >= max)"| E
+        A[FSImage Parsed] -->|Scoring Worker| B[PENDING]
+        B -->|Scheduler Worker| C[DISPATCHED]
+        C -->|Tracker Worker: claim| I[IN_PROGRESS]
+        I -->|Tracker Worker: Success| D[COMPLETED]
+        C -->|"Tracker Worker: Timeout (retry < max)"| B
+        I -->|"Tracker Worker: Timeout (retry < max)"| B
+        C -->|"Tracker Worker: Timeout (retry >= max)"| E[FAILED]
+        I -->|"Tracker Worker: Timeout (retry >= max)"| E
 ```
-
-- 각 Worker는 본인에게 할당된 역할(INSERT, DISPATCH, COMPLETE)만 수행하므로 **데드락(Deadlock)이나 Race Condition이 발생하지 않는 견고한 동시성 모델**을 보장합니다.
 
 ---
 
-## 📂 패키지 구조 가이드 (Implementation Guide)
+## 📂 패키지 구조 가이드
 
-코드 구현 시 팀원 간 동일한 멘탈 모델을 유지하기 위해 핵심 비즈니스 로직을 아래와 같이 패키징합니다.
+프로젝트 주요 패키지와 역할은 다음과 같습니다.
 
 ```text
 edu.dsc.tiering
-├── Main.java                 # 공유 자원(DB, HDFS) 초기화 및 3대 Worker 스레드풀 기동
+├── Main.java                 # 공유 자원(DB, HDFS) 초기화 및 워커 기동
 ├── config/                   # application.yaml 파싱 및 로딩
 ├── hdfs/
-│   ├── HdfsApiCaller.java    # 스토리지 정책 변경 및 SPS 호출 로직
-│   └── FsImageFetcher.java   # DFSAdmin.fetchImage 및 OIV 파싱 래퍼 클래스
+│   ├── HdfsApiCaller.java    # 스토리지 정책 적용 및 SPS 연동
+│   └── FsImageFetcher.java   # FSImage 수집 및 OIV 파싱 래퍼
 ├── model/                    # 도메인 모델 (Tier, JobStatus, PendingJob 등)
-├── repository/               
-│   └── PendingJobRepository  # HikariCP 기반 JDBC CRUD (SKIP LOCKED 구현)
-├── scoring/
-│   ├── ScoringEngine.java    # FSImage 메타데이터 분석 스레드
-│   └── PriorityRule.java     # 접근 시간, 파일 크기에 따른 가중치 알고리즘
-├── scheduler/
-│   └── BatchScheduler.java   # PENDING -> DISPATCHED 스레드
-└── tracking/
-    └── CompletionTracker.java# DISPATCHED/IN_PROGRESS -> COMPLETED/FAILED 검증 스레드
+├── repository/               # DB 접근(예: PendingJobRepository)
+├── scoring/                  # ScoringEngine, PriorityRule
+├── scheduler/                # BatchScheduler, WindowSelector
+└── tracking/                 # CompletionTracker, HdfsPolicyChecker
 ```
 
 ---
 
-## ⚙️ 설정 및 인터페이스 (Configuration)
+## ⚙️ 설정
 
-모든 동작 주기, 가중치, 타임아웃 등은 통합된 하나의 `yaml` 파일을 통해 제어됩니다.
+모든 주기, 가중치, 타임아웃 등은 `application.yaml`에서 설정합니다.
 
 ```yaml
 scoring:
-  enabled: true
-  interval-seconds: 86400
-  weight-access-time: 0.5
-  weight-file-size: 0.5
-  local-fsimage-dir: /tmp/hdfs-auto-tiering-fsimage
-  target-directories:
-    - /test/metric
+    enabled: true
+    interval-seconds: 86400
+    weight-access-time: 0.5
+    weight-file-size: 0.5
+    local-fsimage-dir: /tmp/hdfs-auto-tiering-fsimage
+    target-directories:
+        - /test/metric
 
 scheduler:
-  poll-interval-seconds: 10
-  concurrency: 8
+    poll-interval-seconds: 10
+    concurrency: 8
 
 tracker:
-  poll-interval-seconds: 45
-  timeout-minutes: 60
+    poll-interval-seconds: 45
+    timeout-minutes: 60
+    completion-ratio: 0.95
 ```
 
-`target-directories`는 오토티어링 데몬의 권한 범위입니다. 현재 검증 스크립트는 `/test/metric` 하위에 테스트 데이터를 생성하므로, `/test/metric`을 포함해야 테스트 파일이 스코어링됩니다.
+기본 설정 파일: [hdfs-auto-tiering/src/main/resources/application.yaml](hdfs-auto-tiering/src/main/resources/application.yaml)
 
 ---
 
-## 🚀 Quick Start
+## 동작 개요
 
-로컬 Windows 11 + WSL2 환경에서의 전체 인프라 구성(NameNode, DataNode 3대, External SPS, PostgreSQL 등) 및 YARN Service 배포 방법은 **INFRA.md** 문서를 참고하세요.
+1. Scoring: `FsImageFetcher`가 FSImage를 수집·파싱하면 `ScoringEngine`이 화이트리스트(`scoring.target-directories`) 기준으로 스코어링하여 `pending_jobs`에 삽입합니다.
+2. Scheduling/Dispatch: `BatchScheduler`가 `claimBatch`로 PENDING 작업을 점유(SELECT ... FOR UPDATE SKIP LOCKED)해 DISPATCHED로 전이하고, 각 job에 대해 `HdfsApiCaller.applyTier`를 호출해 스토리지 정책을 적용합니다. 실패 시 재시도 카운트를 증가시키고 상태를 조정합니다.
+3. Tracking: `CompletionTracker`가 DISPATCHED/IN_PROGRESS 작업을 점유해 `HdfsPolicyChecker`로 검증하고 성공 시 COMPLETED, 실패/타임아웃 시 재시도 또는 FAILED로 처리합니다.
+
+---
+
+## 운영 문서
+
+- 인프라 구성: [INFRA.md](INFRA.md)
+- 배포 및 릴리즈: [DEPLOY.md](DEPLOY.md)
+---
+
+## 요구사항
+
+- Java 11
+- Maven
+- PostgreSQL
+- Hadoop 3.4.1
