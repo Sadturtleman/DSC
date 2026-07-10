@@ -24,14 +24,12 @@ jobs:
           cache: maven
 
       - name: Build with Maven
-        run: |
-          cd services/hdfs-auto-tiering
-          mvn clean package -DskipTests
+        run: ./mvnw --batch-mode -pl hdfs-auto-tiering -am clean package -DskipTests
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: services/hdfs-auto-tiering/target/hdfs-auto-tiering.jar
+          files: hdfs-auto-tiering/target/hdfs-auto-tiering.jar
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

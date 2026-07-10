@@ -104,9 +104,18 @@ tracker:
 - 배포 및 릴리즈: [DEPLOY.md](DEPLOY.md)
 ---
 
-## 요구사항
+## 사전 조건 및 빌드
 
-- Java 11
-- Maven
+- **사전 조건**: JDK 11 이상. Maven은 레포에 포함된 Maven Wrapper가 대신하므로 별도 설치가 필요 없습니다.
+- **빌드·테스트**: 레포 루트에서 아래 한 줄로 실행합니다.
+
+```bash
+./mvnw test
+```
+
+Windows PowerShell에서는 `.\mvnw.cmd test`를 사용하세요.
+
+## 요구사항 (실행 환경)
+
 - PostgreSQL
 - Hadoop 3.4.1

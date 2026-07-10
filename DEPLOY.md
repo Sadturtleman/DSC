@@ -27,7 +27,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-태그가 푸시되면 `.github/workflows/release.yml`에 의해 **GitHub Actions**가 자동으로 코드를 빌드(`mvn clean package`)하고, `hdfs-auto-tiering.jar` 파일을 해당 릴리즈의 Asset으로 업로드합니다.
+태그가 푸시되면 `.github/workflows/release.yml`에 의해 **GitHub Actions**가 자동으로 코드를 빌드(`./mvnw -pl hdfs-auto-tiering -am clean package -DskipTests`)하고, `hdfs-auto-tiering.jar` 파일을 해당 릴리즈의 Asset으로 업로드합니다.
 
 ### 2-2. 서버(Ubuntu)에서 자동 배포 스크립트 실행
 GitHub에 릴리즈가 완료되면, 서버(Ubuntu) 터미널에서 `INFRA.md`에 정의된 배포 스크립트를 실행합니다.
@@ -51,33 +51,28 @@ GitHub에 릴리즈가 완료되면, 서버(Ubuntu) 터미널에서 `INFRA.md`�
 
 자동 배포를 거치지 않고, 윈도우 로컬 환경에서 직접 빌드하거나 테스트해야 할 때 사용하는 방법입니다.
 
-### 3-1. Windows에 메이븐(Maven) 설치
-윈도우에 Maven이 없다면 PowerShell(관리자 권한 불필요)에서 아래 명령어로 설치합니다.
-
-```powershell
-winget install Apache.Maven
-```
-> **주의:** 설치 완료 후 반드시 PowerShell 창을 닫고 새로 열어야 `mvn` 명령어가 인식됩니다.
+### 3-1. 사전 조건
+빌드는 레포에 커밋된 Maven Wrapper(`mvnw`/`mvnw.cmd`)로 수행하므로 Maven을 별도로 설치할 필요가 없습니다. JDK 11 이상만 준비되어 있으면 됩니다.
 
 ### 3-2. 로컬 빌드 (Fat JAR 생성)
-소스코드가 있는 경로로 이동하여 패키징을 수행합니다.
+레포 루트에서 Wrapper로 패키징을 수행합니다.
 
 ```powershell
-cd C:\Users\0w0i0\Desktop\DSC\services\hdfs-auto-tiering
-mvn clean package -DskipTests
+cd <레포를 클론한 경로>
+.\mvnw.cmd -pl hdfs-auto-tiering -am clean package -DskipTests
 ```
-빌드 성공 시 `target\hdfs-auto-tiering.jar` 파일이 생성됩니다.
+빌드 성공 시 `hdfs-auto-tiering\target\hdfs-auto-tiering.jar` 파일이 생성됩니다.
 
 ### 3-3. 로컬 직접 실행
 YARN에 올리지 않고 윈도우 호스트에서 데몬을 직접 띄워 테스트할 수 있습니다.
 (`src/main/resources/application.yaml` 내부의 접속 정보가 로컬 환경과 일치하는지 확인 후 실행하세요.)
 
 ```powershell
-# 기본 설정 사용
-java -jar target\hdfs-auto-tiering.jar
+# 기본 설정 사용 (레포 루트에서 실행)
+java -jar hdfs-auto-tiering\target\hdfs-auto-tiering.jar
 
 # 또는 커스텀 설정 파일 지정
-java -jar target\hdfs-auto-tiering.jar C:\path\to\custom-config.yaml
+java -jar hdfs-auto-tiering\target\hdfs-auto-tiering.jar C:\path\to\custom-config.yaml
 ```
 
 ---
