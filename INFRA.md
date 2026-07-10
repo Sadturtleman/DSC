@@ -335,8 +335,8 @@ sudo -u postgres psql -c "CREATE DATABASE dsc_tiering OWNER dsc;"
 
 ```bash
 # 본인의 프로젝트 루트(~/DSC 또는 지정한 경로)에서 실행
-psql -h localhost -U dsc -d dsc_tiering -f ~/DSC/db/migrations/V001__pending_jobs.sql
-psql -h localhost -U dsc -d dsc_tiering -f ~/DSC/db/migrations/V002__add_retry_columns.sql
+psql -h localhost -U dsc -d dsc_tiering -f ~/DSC/db/V001__pending_jobs.sql
+psql -h localhost -U dsc -d dsc_tiering -f ~/DSC/db/V002__add_retry_columns.sql
 ```
 
 테이블이 정상적으로 생성되었는지 확인합니다.

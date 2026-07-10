@@ -10,23 +10,25 @@ hdfs-auto-tiering는 HDFS 파일 스토리지 정책(Tiering)을 자동화하는
 
 ## 빌드 및 실행
 
-빌드:
+빌드 (레포 루트에서, Maven 설치 불필요 — Wrapper 사용):
 
 ```bash
-mvn -q -DskipTests package
+./mvnw -pl hdfs-auto-tiering -am -q -DskipTests package
 ```
 
 실행 (클래스패스의 기본 `application.yaml` 사용):
 
 ```bash
-java -jar target/hdfs-auto-tiering.jar
+java -jar hdfs-auto-tiering/target/hdfs-auto-tiering.jar
 ```
 
 외부 설정 파일을 지정하려면 YAML 경로를 인수로 전달합니다:
 
 ```bash
-java -jar target/hdfs-auto-tiering.jar /etc/dsc/hdfs-auto-tiering.yaml
+java -jar hdfs-auto-tiering/target/hdfs-auto-tiering.jar /etc/dsc/hdfs-auto-tiering.yaml
 ```
+
+또는 `./scripts/run-service.sh [config.yaml]` 래퍼를 사용하면 실행 전 Java 버전을 자동으로 검사합니다.
 
 ## 요구 사항
 
@@ -64,17 +66,17 @@ java -jar target/hdfs-auto-tiering.jar /etc/dsc/hdfs-auto-tiering.yaml
 
 ## 테스트
 
-기본 테스트 실행:
+기본 테스트 실행 (레포 루트에서):
 
 ```bash
-mvn test
+./mvnw -pl hdfs-auto-tiering -am test
 ```
 
-`PendingJobRepositoryTest`는 Testcontainers 기반 PostgreSQL 컨테이너를 사용하므로 Docker가 필요합니다. Docker 환경이 없으면 특정 단위 테스트만 선별 실행할 수 있습니다.
+`PendingJobRepositoryTest`는 Testcontainers 기반 PostgreSQL 컨테이너를 사용하므로 Docker가 필요합니다. Docker 환경이 없으면 특정 단위 테스트만 선별 실행할 수 있습니다 (`./scripts/doctor.sh`로 먼저 확인하세요).
 
 예:
 
 ```bash
-mvn -Dtest=WindowSelectorTest test
-mvn -Dtest='!PendingJobRepositoryTest' test
+./mvnw -pl hdfs-auto-tiering -am -Dtest=WindowSelectorTest test
+./mvnw -pl hdfs-auto-tiering -am -Dtest='!PendingJobRepositoryTest' test
 ```

@@ -107,7 +107,7 @@
                 <directory>src/test/resources</directory>
             </testResource>
             <testResource>
-                <directory>${project.basedir}/../../db/migrations</directory>
+                <directory>${project.basedir}/../db</directory>
                 <targetPath>db/migrations</targetPath>
             </testResource>
         </testResources>

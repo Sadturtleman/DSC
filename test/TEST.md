@@ -63,8 +63,8 @@ scoring:
 JAR 파일은 다음 순서로 찾는다.
 
 1. `AUTO_TIERING_JAR` 환경 변수
-2. `~/DSC/services/hdfs-auto-tiering/target/hdfs-auto-tiering.jar`
-3. `./services/hdfs-auto-tiering/target/hdfs-auto-tiering.jar`
+2. `~/DSC/hdfs-auto-tiering/target/hdfs-auto-tiering.jar`
+3. `./hdfs-auto-tiering/target/hdfs-auto-tiering.jar`
 4. HDFS의 `/apps/hdfs-auto-tiering/lib/hdfs-auto-tiering.jar`
 
 ## 3. 테스트 스위트 생성
@@ -153,8 +153,8 @@ find_jar() {
   fi
 
   local candidates=(
-    "$HOME/DSC/services/hdfs-auto-tiering/target/hdfs-auto-tiering.jar"
-    "$PWD/services/hdfs-auto-tiering/target/hdfs-auto-tiering.jar"
+    "$HOME/DSC/hdfs-auto-tiering/target/hdfs-auto-tiering.jar"
+    "$PWD/hdfs-auto-tiering/target/hdfs-auto-tiering.jar"
     "$PWD/target/hdfs-auto-tiering.jar"
   )
 
@@ -1111,15 +1111,15 @@ DB 상태:
 서비스 코드 자체의 단위 테스트는 Maven으로 실행한다.
 
 ```bash
-cd ~/DSC/services/hdfs-auto-tiering
-mvn test
+cd ~/DSC/hdfs-auto-tiering
+../mvnw test
 ```
 
 Docker가 없어서 Testcontainers 기반 PostgreSQL 테스트가 불가능하면 다음처럼 Repository 테스트만 제외한다.
 
 ```bash
-cd ~/DSC/services/hdfs-auto-tiering
-mvn -Dtest='!PendingJobRepositoryTest' test
+cd ~/DSC/hdfs-auto-tiering
+../mvnw -Dtest='!PendingJobRepositoryTest' test
 ```
 
 테스트 클래스별 의미:
