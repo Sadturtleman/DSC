@@ -1,0 +1,21 @@
+# 셸 스크립트는 항상 LF, Windows 배치 파일은 항상 CRLF로 강제한다.
+# Force LF for shell scripts, CRLF for Windows batch files, regardless of
+# the contributor's OS or core.autocrlf setting. This prevents CRLF-corrupted
+# shebang lines (which break `./script.sh` on Linux CI) and keeps `.cmd`
+# files native for `cmd.exe`. Scoped to scripts only — does not renormalize
+# the rest of the repo.
+#
+# 주의: 실행 비트(+x)는 .gitattributes로 제어할 수 없다. 실행 파일을 새로
+# 추가/수정할 때는 아래를 반드시 실행할 것 (특히 core.filemode=false인
+# Windows 개발 환경에서는 `chmod +x`만으로는 git 인덱스에 반영되지 않는다):
+#   git update-index --chmod=+x <path>
+# Note: the executable bit is NOT controlled by .gitattributes. Whenever a
+# new executable script is added or edited, run the command above explicitly
+# (on Windows with core.filemode=false, a plain `chmod +x` never reaches the
+# git index).
+
+*.sh text eol=lf
+mvnw text eol=lf
+
+*.cmd text eol=crlf
+*.bat text eol=crlf

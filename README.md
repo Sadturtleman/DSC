@@ -107,6 +107,7 @@ tracker:
 ## 사전 조건 및 빌드
 
 - **사전 조건**: JDK 11 이상. Maven은 레포에 포함된 Maven Wrapper가 대신하므로 별도 설치가 필요 없습니다.
+- 문제가 있으면 먼저 실행하세요 / If something's off, run this first: `./scripts/doctor.sh` (Windows: `scripts\doctor.cmd`)
 - **빌드·테스트**: 레포 루트에서 아래 한 줄로 실행합니다.
 
 ```bash
