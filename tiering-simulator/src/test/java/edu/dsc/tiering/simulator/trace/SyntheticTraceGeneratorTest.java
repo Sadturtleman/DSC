@@ -57,8 +57,9 @@ class SyntheticTraceGeneratorTest {
 
         assertFalse(events.isEmpty());
         for (int i = 1; i < events.size(); i++) {
-            assertTrue(events.get(i - 1).at() <= events.get(i).at(),
-                    () -> "정렬 위반: index " + events.indexOf(events.get(i - 1)));
+            int index = i;
+            assertTrue(events.get(index - 1).at() <= events.get(index).at(),
+                    () -> "정렬 위반: index " + (index - 1));
         }
     }
 
