@@ -18,6 +18,15 @@
     <packaging>jar</packaging>
 
     <dependencies>
+        <!-- B1 어댑터(RuleWeightedPolicy)와 PriorityRule의 동등성 테스트 전용.
+             런타임 코드는 아직 SPI를 사용하지 않는다 (구현 순서 11번에서 주입 예정). -->
+        <dependency>
+            <groupId>edu.dsc</groupId>
+            <artifactId>tiering-policy-spi</artifactId>
+            <version>${project.version}</version>
+            <scope>test</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.apache.hadoop</groupId>
             <artifactId>hadoop-client</artifactId>

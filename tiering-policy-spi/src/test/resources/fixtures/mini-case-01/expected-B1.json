@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "policy_id": "B1-rule-weighted",
+  "decisions": [
+    {
+      "path": "/data/mini/moves-to-warm.parquet",
+      "target_placement": "ONE_SSD",
+      "priority": 0.75,
+      "reason": "score=0.75"
+    },
+    {
+      "path": "/data/mini/moves-to-cold.parquet",
+      "target_placement": "COLD",
+      "priority": 1.0,
+      "reason": "score=1.00"
+    }
+  ]
+}

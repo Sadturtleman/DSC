@@ -14,24 +14,24 @@
     {
       "path": "/data/mini/stays-hot.parquet",
       "size_bytes": 1073741824,
-      "current_placement": "HOT",
-      "atime": "2026-06-22T06:00:00Z",
+      "current_placement": "ALL_SSD",
+      "atime": "2026-06-22T00:00:00Z",
       "mtime": "2026-01-01T00:00:00Z",
       "access_stats": null
     },
     {
       "path": "/data/mini/moves-to-warm.parquet",
       "size_bytes": 5368709120,
-      "current_placement": "HOT",
-      "atime": "2026-05-17T06:00:00Z",
+      "current_placement": "ALL_SSD",
+      "atime": "2026-05-17T00:00:00Z",
       "mtime": "2026-01-01T00:00:00Z",
       "access_stats": null
     },
     {
       "path": "/data/mini/moves-to-cold.parquet",
       "size_bytes": 10737418240,
-      "current_placement": "HOT",
-      "atime": "2026-03-03T06:00:00Z",
+      "current_placement": "ALL_SSD",
+      "atime": "2026-03-03T00:00:00Z",
       "mtime": "2026-01-01T00:00:00Z",
       "access_stats": null
     }
