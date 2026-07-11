@@ -1,0 +1,24 @@
+# TODO: bench/ 마이크로벤치마크 실측치로 교체 (INFRA.md 참조). 추정치 사용 시에도 TODO 유지
+#
+# SimConstantsLoader는 TODO 값을 만나면 경고 로그를 남기고 코드에 문서화된 임시
+# 기본값(PLACEHOLDER_*, bench/ 실측 전까지만 유효)으로 대체해 시뮬레이터가 동작하게 한다.
+# 이 파일의 TODO 표시 자체를 임의 추정치로 바꿔 지우는 것은 금지한다 (CLAUDE.md "하지 말 것").
+throughput_bytes_per_sec:
+  SSD: TODO
+  DISK: TODO
+  ARCHIVE: TODO
+migration_bandwidth_bytes_per_sec: TODO
+rate_limit_bytes_per_sec: TODO
+price_per_gb_hour:
+  SSD: TODO
+  DISK: TODO
+  ARCHIVE: TODO
+migration_price_per_gb: TODO
+
+# 아래 tier_capacity_bytes는 CLAUDE.md 원본 sim-constants.yaml 스키마에는 없던 필드다.
+# 구현 순서 5번(ClusterStateModel의 티어 용량 로딩)에서 "상수는 sim-constants.yaml에서
+# 로드(하드코딩 금지)" 원칙을 지키기 위해 추가했다 — 위와 동일하게 TODO 표시를 유지한다.
+tier_capacity_bytes:
+  SSD: TODO
+  DISK: TODO
+  ARCHIVE: TODO

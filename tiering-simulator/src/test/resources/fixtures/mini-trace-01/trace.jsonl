@@ -1,0 +1,6 @@
+{"type":"file_create","at":0,"path":"/data/a.parquet","size_bytes":1000000000}
+{"type":"file_create","at":1000,"path":"/data/b.parquet","size_bytes":2000000000}
+{"type":"file_create","at":2000,"path":"/data/c.parquet","size_bytes":500000000}
+{"type":"read","at":5000,"path":"/data/a.parquet"}
+{"type":"job","at":6000,"job_id":"j1","input_paths":["/data/b.parquet","/data/c.parquet"]}
+{"type":"read","at":9000,"path":"/data/c.parquet"}
