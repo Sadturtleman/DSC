@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "policy_id": "P1-replica-partial",
+  "decisions": [
+    {
+      "path": "/data/.../part-0001.parquet",
+      "target_placement": "WARM",
+      "priority": 0.83,
+      "reason": "score=0.83, demote 2 replicas"
+    }
+  ]
+}

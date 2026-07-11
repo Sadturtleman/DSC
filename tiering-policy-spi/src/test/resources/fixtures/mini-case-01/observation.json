@@ -1,0 +1,41 @@
+{
+  "schema_version": "1.0",
+  "observed_at": "2026-07-01T00:00:00Z",
+  "decided_at": "2026-07-01T06:00:00Z",
+  "observation_mode": "fsimage",
+  "cluster": {
+    "tiers": [
+      {"name": "SSD", "capacity_bytes": 0, "used_bytes": 0},
+      {"name": "DISK", "capacity_bytes": 0, "used_bytes": 0},
+      {"name": "ARCHIVE", "capacity_bytes": 0, "used_bytes": 0}
+    ]
+  },
+  "files": [
+    {
+      "path": "/data/mini/stays-hot.parquet",
+      "size_bytes": 1073741824,
+      "current_placement": "HOT",
+      "atime": "2026-06-22T06:00:00Z",
+      "mtime": "2026-01-01T00:00:00Z",
+      "access_stats": null
+    },
+    {
+      "path": "/data/mini/moves-to-warm.parquet",
+      "size_bytes": 5368709120,
+      "current_placement": "HOT",
+      "atime": "2026-05-17T06:00:00Z",
+      "mtime": "2026-01-01T00:00:00Z",
+      "access_stats": null
+    },
+    {
+      "path": "/data/mini/moves-to-cold.parquet",
+      "size_bytes": 10737418240,
+      "current_placement": "HOT",
+      "atime": "2026-03-03T06:00:00Z",
+      "mtime": "2026-01-01T00:00:00Z",
+      "access_stats": null
+    }
+  ],
+  "events": [],
+  "params": {"aggressiveness": 0.7, "access_horizon_days": 30}
+}
