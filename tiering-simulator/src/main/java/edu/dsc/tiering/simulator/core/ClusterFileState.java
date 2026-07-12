@@ -7,6 +7,7 @@ public final class ClusterFileState {
 
     private final String path;
     private final long sizeBytes;
+    private final long createdAtMillis;
     private Placement placement;
     private long lastAccessAtMillis;
 
@@ -14,6 +15,7 @@ public final class ClusterFileState {
         this.path = path;
         this.sizeBytes = sizeBytes;
         this.placement = placement;
+        this.createdAtMillis = createdAtMillis;
         this.lastAccessAtMillis = createdAtMillis;
     }
 
@@ -27,6 +29,11 @@ public final class ClusterFileState {
 
     public Placement placement() {
         return placement;
+    }
+
+    /** file_create 이벤트의 at — SnapshotAssembler가 mtime으로 쓴다(이 모델에서 파일은 생성 후 불변). */
+    public long createdAtMillis() {
+        return createdAtMillis;
     }
 
     public long lastAccessAtMillis() {

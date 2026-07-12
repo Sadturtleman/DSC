@@ -34,8 +34,9 @@ public final class SimConstantsLoader {
             500_000_000L, 150_000_000L, 20_000_000L); // SSD, DISK, ARCHIVE
     private static final long PLACEHOLDER_MIGRATION_BANDWIDTH_BYTES_PER_SEC = 100_000_000L;
     private static final long PLACEHOLDER_RATE_LIMIT_BYTES_PER_SEC = 200_000_000L;
+    // SSD:DISK:ARCHIVE = 6:1:0.3 (구현 순서 6번 항목 7 지시 — 가상 값, 실측치 아님)
     private static final Map<PhysicalTier, Double> PLACEHOLDER_PRICE_PER_GB_HOUR = tierDoubleMap(
-            0.00014, 0.00004, 0.000008); // SSD, DISK, ARCHIVE
+            0.06, 0.01, 0.003); // SSD, DISK, ARCHIVE
     private static final double PLACEHOLDER_MIGRATION_PRICE_PER_GB = 0.01;
     private static final Map<PhysicalTier, Long> PLACEHOLDER_TIER_CAPACITY_BYTES = tierLongMap(
             1_000_000_000_000L, 10_000_000_000_000L, 100_000_000_000_000L); // SSD, DISK, ARCHIVE

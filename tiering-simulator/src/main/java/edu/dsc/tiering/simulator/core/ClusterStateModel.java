@@ -10,6 +10,8 @@ import edu.dsc.tiering.spi.Placement;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Collection;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -65,6 +67,11 @@ public final class ClusterStateModel implements SimListener {
 
     public ClusterFileState fileState(String path) {
         return files.get(path);
+    }
+
+    /** SnapshotAssembler가 ObservationSnapshot.files를 조립할 때 쓰는 전체 파일 뷰(읽기 전용). */
+    public Collection<ClusterFileState> allFiles() {
+        return Collections.unmodifiableCollection(files.values());
     }
 
     public long usedBytes(PhysicalTier tier) {
